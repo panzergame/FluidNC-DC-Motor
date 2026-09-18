@@ -86,6 +86,7 @@ idf_component_register(SRCS BTConfig.cpp
 							Machine/SPIBus.cpp
 							Machine/UserInputs.cpp
 							Machine/UserOutputs.cpp
+							Motors/DCMotor.cpp
 							Motors/Dynamixel2.cpp
 							Motors/MotorDriver.cpp
 							Motors/NullMotor.cpp
