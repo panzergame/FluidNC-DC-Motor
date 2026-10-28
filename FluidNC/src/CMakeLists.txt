@@ -87,9 +87,11 @@ idf_component_register(SRCS BTConfig.cpp
 							Machine/UserInputs.cpp
 							Machine/UserOutputs.cpp
 							Motors/DCMotor.cpp
+							Motors/DCServo.cpp
 							Motors/Dynamixel2.cpp
 							Motors/MotorDriver.cpp
 							Motors/NullMotor.cpp
+							Motors/Pid.cpp
 							Motors/PwmServo.cpp
 							Motors/RcServo.cpp
 							Motors/Servo.cpp

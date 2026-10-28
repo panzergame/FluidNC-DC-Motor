@@ -139,9 +139,4 @@ namespace MotorDrivers {
         log_info("    DC motor IN1:" << _in1_pin.name() << " IN2:" << _in2_pin.name() << " PWM:" << _pwm_hz << "Hz duty:" << _max_duty
                                      << "/" << _full_duty << (_invert_direction ? " inverted" : ""));
     }
-
-    // Configuration registration
-    namespace {
-        MotorFactory::InstanceBuilder<DCMotor> registration("dcmotor");
-    }
 }

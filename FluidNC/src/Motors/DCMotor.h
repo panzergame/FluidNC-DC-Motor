@@ -18,12 +18,8 @@ namespace MotorDrivers {
         ripple current through the motor even at standstill.
 
         This is only the power stage - it has no encoder, no PID and no notion
-        of position, so an axis configured with it will accept a move and not
-        go anywhere.  It registers as a motor driver anyway so that the pins and
-        the duty mapping can be exercised from a config file and the $M*
-        commands before any of the closed-loop machinery exists.  Once the
-        closed-loop driver lands, that driver owns one of these as a
-        handler.section("dc_motor", ...) member and this registration goes away.
+        of position.  It is not registered as a motor driver on its own; the
+        closed-loop DCServo owns one as its dc_motor section.
     */
     class DCMotor : public MotorDriver {
     public:

@@ -8,6 +8,7 @@ idf_component_register(SRCS AssertionFailed.cpp
                             localfs.cpp
                             nvs.cpp
                             PwmPin.cpp
+                            QuadratureEncoder.cpp
                             restart.cpp
                             sdspi.cpp
                             spi.cpp
