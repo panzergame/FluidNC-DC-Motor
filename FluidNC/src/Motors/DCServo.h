@@ -13,6 +13,10 @@
 
 class QuadratureEncoder;
 
+namespace Machine {
+    class Motor;
+}
+
 namespace MotorDrivers {
     /*
         Closed-loop brushed DC motor: a DCMotor power stage, a quadrature
@@ -30,7 +34,10 @@ namespace MotorDrivers {
         The loop runs in its own task rather than an ISR, because it is float
         math and the ESP32 does not save FPU state on interrupt entry.
 
-        Homing has to come from limit switches; there is no index pulse.
+        There is no index pulse, so homing comes either from limit switches
+        or, with homing_stall_error set, from driving into a hard stop: when
+        the axis stops following the setpoint during a homing approach, the
+        motor's limit is raised in software as if a switch had fired.
     */
     class DCServo : public Servo {
     public:
@@ -38,8 +45,10 @@ namespace MotorDrivers {
 
         void init() override;
 
-        bool set_homing_mode(bool isHoming) override { return false; }
-        bool can_self_home() override { return false; }
+        // Called from the protocol task, so it only flags the mode; the
+        // control task acts on it.
+        bool set_homing_mode(bool isHoming) override;
+        bool can_self_home() override { return _homing_stall_error != 0; }
 
         // Called from ISR context by Axes, so it only flags the request; the
         // control task does the coasting.
@@ -64,6 +73,12 @@ namespace MotorDrivers {
 
         void trip(float error);
 
+        // Detects the hard stop while approaching, and releases the soft
+        // limit once the axis has backed off it.  Returns true if the motor
+        // is being held at the stop, in which case it must not be driven.
+        bool stall_check(float setpoint, float measured, float error, bool approaching);
+        void release_stall();
+
         DCMotor* _dc  = nullptr;
         Pid*     _pid = nullptr;
 
@@ -80,7 +95,14 @@ namespace MotorDrivers {
         uint32_t _position_deadband   = 0;
         uint32_t _report_ms           = 0;
 
+        uint32_t _homing_stall_error    = 0;
+        float    _homing_stall_velocity = 100.0f;
+        uint32_t _homing_stall_ms       = 50;
+        uint32_t _homing_release_counts = 10;
+        float    _homing_max_drive      = 100.0f;
+
         QuadratureEncoder* _encoder      = nullptr;
+        Machine::Motor*    _motor        = nullptr;
         TickType_t         _update_ticks = 1;
         float              _dt           = 0.001f;
         float              _vel_alpha    = 1.0f;
@@ -97,5 +119,13 @@ namespace MotorDrivers {
         float    _report_max    = 0.0f;
         uint32_t _report_ticks  = 0;
         float    _last_drive    = 0.0f;
+
+        volatile bool _homing = false;
+
+        // Stall state, touched only by the control task.
+        uint32_t _stall_ticks    = 0;
+        bool     _stalled        = false;
+        bool     _stall_positive = false;
+        float    _stall_pos      = 0.0f;
     };
 }

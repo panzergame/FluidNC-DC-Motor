@@ -9,9 +9,7 @@
 #include <cmath>      // M_PI
 
 namespace MotorDrivers {
-    static constexpr float max_output = 100.0f;
-
-    float Pid::update(float setpoint, float measured, float dt) {
+    float Pid::update(float setpoint, float measured, float dt, float limit) {
         const float error = setpoint - measured;
 
         // The first sample has no previous measurement to differentiate
@@ -32,11 +30,11 @@ namespace MotorDrivers {
         const float integral  = _integral + _ki * error * dt;
         const float candidate = base + integral;
 
-        if ((candidate > max_output && error > 0.0f) || (candidate < -max_output && error < 0.0f)) {
-            return std::clamp(base + _integral, -max_output, max_output);
+        if ((candidate > limit && error > 0.0f) || (candidate < -limit && error < 0.0f)) {
+            return std::clamp(base + _integral, -limit, limit);
         }
         _integral = integral;
-        return std::clamp(candidate, -max_output, max_output);
+        return std::clamp(candidate, -limit, limit);
     }
 
     void Pid::reset() {

@@ -125,6 +125,10 @@ namespace Machine {
         return positive ? _posLimitPin.defined() : _negLimitPin.defined();
     }
 
+    void Motor::softLimit(bool positive, bool active) {
+        (positive ? _posLimitPin : _negLimitPin).trigger(active);
+    }
+
     Motor::~Motor() {
         delete _driver;
     }

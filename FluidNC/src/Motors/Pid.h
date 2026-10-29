@@ -20,7 +20,11 @@ namespace MotorDrivers {
     */
     class Pid : public Configuration::Configurable {
     public:
-        float update(float setpoint, float measured, float dt);
+        static constexpr float max_output = 100.0f;
+
+        // limit narrows the output clamp below max_output, and anti-windup
+        // follows it, so the integral does not grow against a lower ceiling.
+        float update(float setpoint, float measured, float dt, float limit = max_output);
 
         // Clears the integral and derivative history.  Call it whenever the
         // loop has not been driving the output, so that stale state does not
