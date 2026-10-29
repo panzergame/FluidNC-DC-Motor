@@ -68,13 +68,7 @@ namespace MotorDrivers {
 
         config_message();
 
-        xTaskCreateAffinitySet(control_task,
-                               "dc_servo",
-                               4096,
-                               this,
-                               control_task_priority,
-                               (1 << SUPPORT_TASK_CORE),
-                               nullptr);
+        xTaskCreateAffinitySet(control_task, "dc_servo", 4096, this, control_task_priority, (1 << SUPPORT_TASK_CORE), nullptr);
     }
 
     void DCServo::control_task(void* arg) {
@@ -154,8 +148,19 @@ namespace MotorDrivers {
             return;
         }
 
-        const float velocity_cmd = _setpoint_vel + _position_kp * error;
-        const float drive        = _pid->update(velocity_cmd, _measured_vel, _dt);
+        // Stiction stops the motor from correcting the last count or two, so
+        // at rest the integral would only wind up into a stalled-motor drive
+        // that heats the motor and pushes along with the next disturbance.
+        // Idle rather than a zero setpoint velocity, because at low feed rates
+        // the setpoint sits still for many ticks between steps mid-move.
+        float velocity_cmd = 0.0f;
+        float drive        = 0.0f;
+        if (_position_deadband && state_is(State::Idle) && std::fabs(error) <= float(_position_deadband)) {
+            _pid->reset();
+        } else {
+            velocity_cmd = _setpoint_vel + _position_kp * error;
+            drive        = _pid->update(velocity_cmd, _measured_vel, _dt);
+        }
         _dc->set(int32_t(drive * float(_dc->maxDuty()) / 100.0f));
         _last_drive = drive;
 
@@ -241,6 +246,15 @@ namespace MotorDrivers {
         // Position error, in encoder counts, beyond which the motor coasts and the machine
         // alarms.  0 disables the check.
         handler.item("max_following_error", _max_following_error, 0, 1000000);
+
+        // @config position_deadband
+        // @default 0
+        // @tuning per-machine
+        // While the machine is idle and the position error is within this many encoder
+        // counts, the motor coasts and the velocity PID is reset.  Set it just above the
+        // error stiction leaves at rest, so the loop does not hold drive on a stalled motor.
+        // 0 disables it.
+        handler.item("position_deadband", _position_deadband, 0, 10000);
 
         // @config report_ms
         // @default 0
