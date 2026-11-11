@@ -43,6 +43,11 @@ namespace MotorDrivers {
     // control period.
     static constexpr UBaseType_t control_task_priority = 10;
 
+    // Setpoint speed, in counts per second, below which the trajectory counts
+    // as stopped.  Far below any useful feed rate, but reached within a few
+    // filter time constants once the setpoint stops moving.
+    static constexpr float min_motion_vel = 1.0f;
+
     // Stopping the stepper has to happen on the protocol task, not this one.
     static void do_following_error() {
         mc_critical(ExecAlarm::HardStop);
@@ -244,8 +249,13 @@ namespace MotorDrivers {
             _pid->reset();
         } else {
             velocity_cmd = _setpoint_vel + _position_kp * error;
-            drive        = _pid->update(velocity_cmd, _measured_vel, _dt, drive_limit);
+            // The filtered setpoint velocity only decays towards zero after a
+            // move; without a floor the friction feedforward would keep
+            // pushing for seconds after the trajectory has stopped.
+            const float friction_ref = std::fabs(_setpoint_vel) < min_motion_vel ? 0.0f : _setpoint_vel;
+            drive = _pid->update(velocity_cmd, _measured_vel, friction_ref, _dt, drive_limit);
         }
+
         // The following error check misses a jam whose error stays under the
         // threshold - at rest, near the end of a move, or with the check off -
         // and the integral then holds a stopped motor at full drive.  Relative

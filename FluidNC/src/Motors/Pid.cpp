@@ -9,7 +9,7 @@
 #include <cmath>      // M_PI
 
 namespace MotorDrivers {
-    float Pid::update(float setpoint, float measured, float dt, float limit) {
+    float Pid::update(float setpoint, float measured, float friction_ref, float dt, float limit) {
         const float error = setpoint - measured;
 
         // The first sample has no previous measurement to differentiate
@@ -26,7 +26,12 @@ namespace MotorDrivers {
         _prev_measured = measured;
         _primed        = true;
 
-        const float base      = _kff * setpoint + _kp * error + _d_term;
+        float friction = 0.0f;
+        if (friction_ref != 0.0f) {
+            friction = friction_ref > 0.0f ? _kfs : -_kfs;
+        }
+
+        const float base      = _kff * setpoint + friction + _kp * error + _d_term;
         const float integral  = _integral + _ki * error * dt;
         const float candidate = base + integral;
 
@@ -70,6 +75,14 @@ namespace MotorDrivers {
         // loop this is roughly 100 divided by the no-load speed at full drive, and should
         // carry most of the output so that kp and ki only correct the remainder.
         handler.item("kff", _kff, 0.0f, 1e6f);
+
+        // @config kfs
+        // @default 0
+        // @tuning per-machine
+        // Friction feedforward, in percent of full drive, added in the direction of the
+        // planned motion.  Set it to the drive the motor needs to keep moving at low
+        // speed, so the integral does not have to build that up at the start of every move.
+        handler.item("kfs", _kfs, 0.0f, 100.0f);
 
         // @config d_filter_hz
         // @default 0

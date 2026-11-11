@@ -24,7 +24,12 @@ namespace MotorDrivers {
 
         // limit narrows the output clamp below max_output, and anti-windup
         // follows it, so the integral does not grow against a lower ceiling.
-        float update(float setpoint, float measured, float dt, float limit = max_output);
+        //
+        // friction_ref only gives the sign of the friction feedforward.  It is
+        // separate from setpoint because a setpoint that includes an outer
+        // loop's correction jitters around zero at low speed, and every sign
+        // flip would swing the output by twice kfs.
+        float update(float setpoint, float measured, float friction_ref, float dt, float limit = max_output);
 
         // Clears the integral and derivative history.  Call it whenever the
         // loop has not been driving the output, so that stale state does not
@@ -38,6 +43,7 @@ namespace MotorDrivers {
         float _ki          = 0.0f;
         float _kd          = 0.0f;
         float _kff         = 0.0f;
+        float _kfs         = 0.0f;
         float _d_filter_hz = 0.0f;
 
         float _integral      = 0.0f;
