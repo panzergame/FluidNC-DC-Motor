@@ -70,6 +70,7 @@ namespace MotorDrivers {
         // Takes the current encoder reading as being where the setpoint is,
         // so control resumes from rest without chasing an old error.
         void resync(float setpoint, float measured);
+        void update_filters();
 
         // Coasts the motor and alarms the machine; the caller logs why.
         void trip();
@@ -110,6 +111,8 @@ namespace MotorDrivers {
         TickType_t         _update_ticks = 1;
         float              _dt           = 0.001f;
         float              _vel_alpha    = 1.0f;
+        // Cutoff _vel_alpha was computed for, so runtime $ changes take effect.
+        float              _vel_alpha_hz = -1.0f;
         bool               _has_errors   = false;
 
         // Control state, touched only by the control task.

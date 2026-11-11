@@ -71,7 +71,7 @@ namespace MotorDrivers {
             _update_ticks = 1;
         }
         _dt        = float(_update_ticks) / float(configTICK_RATE_HZ);
-        _vel_alpha = 1.0f - std::exp(-2.0f * float(M_PI) * _velocity_filter_hz * _dt);
+        update_filters();
 
         config_message();
 
@@ -94,6 +94,13 @@ namespace MotorDrivers {
     bool DCServo::set_homing_mode(bool isHoming) {
         _homing = isHoming;
         return true;
+    }
+
+    void DCServo::update_filters() {
+        if (_velocity_filter_hz != _vel_alpha_hz) {
+            _vel_alpha    = 1.0f - std::exp(-2.0f * float(M_PI) * _velocity_filter_hz * _dt);
+            _vel_alpha_hz = _velocity_filter_hz;
+        }
     }
 
     void DCServo::resync(float setpoint, float measured) {
@@ -167,6 +174,8 @@ namespace MotorDrivers {
         const int32_t raw      = _encoder->read();
         const float   measured = float(_encoder_invert ? -raw : raw);
         const float   setpoint = float(get_axis_steps(_axis)) * _counts_per_step;
+
+        update_filters();
 
         // Ahead of the disabled path, so that a homing failure that also
         // disables the motor still clears the soft limit.
