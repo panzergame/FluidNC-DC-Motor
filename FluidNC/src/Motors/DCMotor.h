@@ -41,7 +41,7 @@ namespace MotorDrivers {
 
         // Signed duty, clamped to +/- maxDuty().  Positive drives the direction
         // that increases axis position, subject to invert_direction.  Zero
-        // coasts; use brake() for the other kind of stop.
+        // coasts, or brakes with slow_decay.
         void set(int32_t duty);
 
         void brake();  // both inputs high - motor terminals shorted
@@ -70,6 +70,7 @@ namespace MotorDrivers {
         uint32_t _pwm_hz           = 20000;
         bool     _invert_direction = false;
         uint32_t _max_duty_percent = 100;
+        bool     _slow_decay       = false;
 
         // Full scale of the PWM pins, resolved in init() because PwmPin derives
         // the LEDC bit depth from _pwm_hz.  brake() uses this rather than

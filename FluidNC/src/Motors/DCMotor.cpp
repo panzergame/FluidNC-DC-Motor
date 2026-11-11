@@ -46,7 +46,15 @@ namespace MotorDrivers {
             duty = -duty;
         }
 
-        if (duty >= 0) {
+        if (_slow_decay) {
+            // The off-time is spent in brake rather than coast, so the inverted
+            // duty goes on the opposite input.
+            if (duty >= 0) {
+                write(_full_duty, _full_duty - uint32_t(duty));
+            } else {
+                write(_full_duty - uint32_t(-duty), _full_duty);
+            }
+        } else if (duty >= 0) {
             write(uint32_t(duty), 0);
         } else {
             write(0, uint32_t(-duty));
@@ -133,6 +141,15 @@ namespace MotorDrivers {
         // to cap average motor voltage when the supply is higher than the motor is
         // rated for.  brake() ignores it, since a partial brake is not a brake.
         handler.item("max_duty_percent", _max_duty_percent, 1, 100);
+
+        // @config slow_decay
+        // @default false
+        // @tuning per-machine
+        // PWM the bridge between drive and brake instead of drive and coast.  Motor
+        // current stays continuous at low duty, so duty maps far more linearly onto
+        // torque near zero, and back-EMF damps the motor at every duty.  Zero duty
+        // brakes instead of coasting; disabling the motor still coasts.
+        handler.item("slow_decay", _slow_decay);
     }
 
     void DCMotor::config_message() {
