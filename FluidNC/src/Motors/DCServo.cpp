@@ -102,14 +102,14 @@ namespace MotorDrivers {
         _last_measured = measured;
         _setpoint_vel  = 0.0f;
         _measured_vel  = 0.0f;
+        _jam_ticks     = 0;
         _pid->reset();
     }
 
-    void DCServo::trip(float error) {
+    void DCServo::trip() {
         _tripped      = true;
         _trip_alarmed = false;
         _dc->coast();
-        log_error(name() << " " << axisName() << " following error " << error << " counts exceeds " << _max_following_error);
         protocol_send_event(&followingErrorEvent);
     }
 
@@ -213,7 +213,8 @@ namespace MotorDrivers {
         const bool  approaching = _homing && Machine::Homing::approach();
         // Approaching a hard stop is meant to build up error.
         if (!(approaching && _homing_stall_error) && _max_following_error && std::fabs(error) > float(_max_following_error)) {
-            trip(error);
+            log_error(name() << " " << axisName() << " following error " << error << " counts exceeds " << _max_following_error);
+            trip();
             _last_drive = 0.0f;
             return;
         }
@@ -227,13 +228,32 @@ namespace MotorDrivers {
         // that heats the motor and pushes along with the next disturbance.
         // Idle rather than a zero setpoint velocity, because at low feed rates
         // the setpoint sits still for many ticks between steps mid-move.
-        float velocity_cmd = 0.0f;
-        float drive        = 0.0f;
+        float       velocity_cmd = 0.0f;
+        float       drive        = 0.0f;
+        const float drive_limit  = _homing ? _homing_max_drive : Pid::max_output;
         if (_position_deadband && state_is(State::Idle) && std::fabs(error) <= float(_position_deadband)) {
             _pid->reset();
         } else {
             velocity_cmd = _setpoint_vel + _position_kp * error;
-            drive        = _pid->update(velocity_cmd, _measured_vel, _dt, _homing ? _homing_max_drive : Pid::max_output);
+            drive        = _pid->update(velocity_cmd, _measured_vel, _dt, drive_limit);
+        }
+        // The following error check misses a jam whose error stays under the
+        // threshold - at rest, near the end of a move, or with the check off -
+        // and the integral then holds a stopped motor at full drive.  Relative
+        // to the active limit so it still fires under homing_max_drive; stall
+        // homing approaches are left to stall_check.
+        if (_stall_ms && !(approaching && _homing_stall_error) && std::fabs(drive) >= drive_limit * _stall_drive / 100.0f &&
+            std::fabs(_measured_vel) < _stall_velocity) {
+            ++_jam_ticks;
+            if (float(_jam_ticks) * _dt * 1000.0f >= float(_stall_ms)) {
+                log_error(name() << " " << axisName() << " stalled at " << drive << "% drive for " << _stall_ms << "ms, error " << error
+                                 << " counts");
+                trip();
+                _last_drive = 0.0f;
+                return;
+            }
+        } else {
+            _jam_ticks = 0;
         }
         _dc->set(int32_t(drive * float(_dc->maxDuty()) / 100.0f));
         _last_drive = drive;
@@ -329,6 +349,30 @@ namespace MotorDrivers {
         // error stiction leaves at rest, so the loop does not hold drive on a stalled motor.
         // 0 disables it.
         handler.item("position_deadband", _position_deadband, 0, 10000);
+
+        // @config stall_ms
+        // @default 100
+        // @tuning per-machine
+        // If the drive stays at or above stall_drive while the axis moves slower than
+        // stall_velocity for this long, the motor coasts and the machine alarms.  Protects
+        // the motor and power stage from a jam the following error check misses.  Must be
+        // longer than the axis takes to accelerate past stall_velocity at full drive.
+        // 0 disables it.
+        handler.item("stall_ms", _stall_ms, 0, 10000);
+
+        // @config stall_drive
+        // @default 90
+        // @tuning per-machine
+        // Drive, in percent of the current drive limit (homing_max_drive while homing),
+        // at or above which the motor counts as pushing for stall detection.
+        handler.item("stall_drive", _stall_drive, 1.0f, 100.0f);
+
+        // @config stall_velocity
+        // @default 100
+        // @tuning per-machine
+        // Measured speed, in encoder counts per second, below which the axis counts as
+        // stopped for stall detection.
+        handler.item("stall_velocity", _stall_velocity, 0.0f, 1e7f);
 
         // @config homing_stall_error
         // @default 0

@@ -71,7 +71,8 @@ namespace MotorDrivers {
         // so control resumes from rest without chasing an old error.
         void resync(float setpoint, float measured);
 
-        void trip(float error);
+        // Coasts the motor and alarms the machine; the caller logs why.
+        void trip();
 
         // Detects the hard stop while approaching, and releases the soft
         // limit once the axis has backed off it.  Returns true if the motor
@@ -94,6 +95,9 @@ namespace MotorDrivers {
         uint32_t _max_following_error = 0;
         uint32_t _position_deadband   = 0;
         uint32_t _report_ms           = 0;
+        uint32_t _stall_ms            = 100;
+        float    _stall_drive         = 90.0f;
+        float    _stall_velocity      = 100.0f;
 
         uint32_t _homing_stall_error    = 0;
         float    _homing_stall_velocity = 100.0f;
@@ -119,6 +123,7 @@ namespace MotorDrivers {
         float    _report_max    = 0.0f;
         uint32_t _report_ticks  = 0;
         float    _last_drive    = 0.0f;
+        uint32_t _jam_ticks     = 0;
 
         volatile bool _homing = false;
 
