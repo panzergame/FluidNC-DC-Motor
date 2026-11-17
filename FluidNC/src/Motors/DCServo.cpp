@@ -35,7 +35,8 @@
 #include "Event.h"
 #include "System.h"  // get_axis_steps(), state_is()
 
-#include <cmath>  // std::fabs, std::exp
+#include <algorithm>  // std::min
+#include <cmath>      // std::fabs, std::exp
 
 namespace MotorDrivers {
     // Below the WiFi and timer tasks so they keep their latency, above the
@@ -43,10 +44,13 @@ namespace MotorDrivers {
     // control period.
     static constexpr UBaseType_t control_task_priority = 10;
 
-    // Setpoint speed, in counts per second, below which the trajectory counts
-    // as stopped.  Far below any useful feed rate, but reached within a few
-    // filter time constants once the setpoint stops moving.
-    static constexpr float min_motion_vel = 1.0f;
+    // Longest the setpoint may sit still between steps and still count as
+    // moving.  Slower feeds than this spacing allows are as good as stopped.
+    static constexpr float max_step_gap_s = 0.25f;
+
+    static float lowpass_alpha(float hz, float dt) {
+        return 1.0f - std::exp(-2.0f * float(M_PI) * hz * dt);
+    }
 
     // Stopping the stepper has to happen on the protocol task, not this one.
     static void do_following_error() {
@@ -103,8 +107,12 @@ namespace MotorDrivers {
 
     void DCServo::update_filters() {
         if (_velocity_filter_hz != _vel_alpha_hz) {
-            _vel_alpha    = 1.0f - std::exp(-2.0f * float(M_PI) * _velocity_filter_hz * _dt);
+            _vel_alpha    = lowpass_alpha(_velocity_filter_hz, _dt);
             _vel_alpha_hz = _velocity_filter_hz;
+        }
+        if (_setpoint_filter_hz != _sp_alpha_hz) {
+            _sp_alpha    = lowpass_alpha(_setpoint_filter_hz, _dt);
+            _sp_alpha_hz = _setpoint_filter_hz;
         }
     }
 
@@ -115,8 +123,36 @@ namespace MotorDrivers {
         _setpoint_vel  = 0.0f;
         _measured_vel  = 0.0f;
         _jam_ticks     = 0;
+        _motion_dir    = 0;
+        _still_ticks   = 0;
         _edge_vel.reset();
         _pid->reset();
+    }
+
+    // The filtered setpoint velocity is a poor motion flag: at low feed rates
+    // it dips towards zero between steps, toggling the friction feedforward,
+    // and after a move it takes several time constants to decay.  The step
+    // spacing itself says how long a pause still belongs to the motion.
+    void DCServo::track_motion(float setpoint_delta) {
+        const uint32_t max_gap = uint32_t(max_step_gap_s / _dt);
+        if (setpoint_delta != 0.0f) {
+            const int32_t dir = setpoint_delta > 0.0f ? 1 : -1;
+            // From rest the spacing is unknown until the second step.
+            _step_gap    = dir == _motion_dir ? _still_ticks + 1 : max_gap;
+            _motion_dir  = dir;
+            _still_ticks = 0;
+            return;
+        }
+        if (_motion_dir == 0) {
+            return;
+        }
+        ++_still_ticks;
+        // Twice the last spacing rides out the jitter of steps against the
+        // control period.
+        const uint32_t hold = std::min(2 * _step_gap, max_gap);
+        if (_still_ticks > hold) {
+            _motion_dir = 0;
+        }
     }
 
     void DCServo::trip() {
@@ -220,7 +256,9 @@ namespace MotorDrivers {
             return;
         }
 
-        _setpoint_vel += ((setpoint - _last_setpoint) / _dt - _setpoint_vel) * _vel_alpha;
+        const float setpoint_delta = setpoint - _last_setpoint;
+        _setpoint_vel += (setpoint_delta / _dt - _setpoint_vel) * _sp_alpha;
+        track_motion(setpoint_delta);
         float measured_rate = (measured - _last_measured) / _dt;
         if (sample.timed) {
             measured_rate = _edge_vel.update(count, sample.edge_time, _dt, float(_encoder->timer_hz()));
@@ -259,11 +297,7 @@ namespace MotorDrivers {
             _pid->reset();
         } else {
             velocity_cmd = _setpoint_vel + _position_kp * error;
-            // The filtered setpoint velocity only decays towards zero after a
-            // move; without a floor the friction feedforward would keep
-            // pushing for seconds after the trajectory has stopped.
-            const float friction_ref = std::fabs(_setpoint_vel) < min_motion_vel ? 0.0f : _setpoint_vel;
-            drive = _pid->update(velocity_cmd, _measured_vel, friction_ref, _dt, drive_limit);
+            drive        = _pid->update(velocity_cmd, _measured_vel, float(_motion_dir), _dt, drive_limit);
         }
 
         // The following error check misses a jam whose error stays under the
@@ -359,11 +393,19 @@ namespace MotorDrivers {
         // @config velocity_filter_hz
         // @default 100
         // @tuning typical
-        // Low-pass cutoff on both the measured and setpoint velocities.  The setpoint
-        // velocity is quantized to whole steps per control period, and so is the measured
-        // one on encoders without edge timing (see the startup log); with edge timing the
-        // measured velocity only needs this for noise.
+        // Low-pass cutoff on the measured velocity.  With edge timing (see the startup
+        // log) it only has to remove noise and the A/B edge spacing ripple, so it can be
+        // high; without, the velocity is quantized to whole counts per control period and
+        // needs a cutoff well below the update rate.
         handler.item("velocity_filter_hz", _velocity_filter_hz, 1.0f, 10000.0f);
+
+        // @config setpoint_filter_hz
+        // @default 50
+        // @tuning typical
+        // Low-pass cutoff on the setpoint velocity that feeds the velocity loop forward.
+        // It is quantized to whole steps per control period, counts_per_step/update_ms
+        // apart, so a counts_per_step below 1 allows a higher cutoff and less lag.
+        handler.item("setpoint_filter_hz", _setpoint_filter_hz, 1.0f, 10000.0f);
 
         // @config max_following_error
         // @default 0

@@ -72,6 +72,7 @@ namespace MotorDrivers {
         // so control resumes from rest without chasing an old error.
         void resync(float setpoint, float measured);
         void update_filters();
+        void track_motion(float setpoint_delta);
 
         // Coasts the motor and alarms the machine; the caller logs why.
         void trip();
@@ -94,6 +95,7 @@ namespace MotorDrivers {
         uint32_t _update_ms           = 1;
         float    _position_kp         = 0.0f;
         float    _velocity_filter_hz  = 100.0f;
+        float    _setpoint_filter_hz  = 50.0f;
         uint32_t _max_following_error = 0;
         uint32_t _position_deadband   = 0;
         uint32_t _report_ms           = 0;
@@ -112,8 +114,10 @@ namespace MotorDrivers {
         TickType_t         _update_ticks = 1;
         float              _dt           = 0.001f;
         float              _vel_alpha    = 1.0f;
-        // Cutoff _vel_alpha was computed for, so runtime $ changes take effect.
+        float              _sp_alpha     = 1.0f;
+        // Cutoffs the alphas were computed for, so runtime $ changes take effect.
         float              _vel_alpha_hz = -1.0f;
+        float              _sp_alpha_hz  = -1.0f;
         bool               _has_errors   = false;
 
         // Control state, touched only by the control task.
@@ -128,6 +132,13 @@ namespace MotorDrivers {
         uint32_t _report_ticks  = 0;
         float    _last_drive    = 0.0f;
         uint32_t _jam_ticks     = 0;
+
+        // Direction the setpoint last stepped in, held across the gaps
+        // between steps; 0 once the trajectory has stopped.  Gives the
+        // friction feedforward its sign.
+        int32_t  _motion_dir    = 0;
+        uint32_t _still_ticks   = 0;
+        uint32_t _step_gap      = 0;  // ticks between the last two steps
 
         EdgeVelocity _edge_vel;
 
