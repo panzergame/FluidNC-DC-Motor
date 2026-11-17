@@ -89,6 +89,7 @@ idf_component_register(SRCS BTConfig.cpp
 							Motors/DCMotor.cpp
 							Motors/DCServo.cpp
 							Motors/Dynamixel2.cpp
+							Motors/EdgeVelocity.cpp
 							Motors/MotorDriver.cpp
 							Motors/NullMotor.cpp
 							Motors/Pid.cpp

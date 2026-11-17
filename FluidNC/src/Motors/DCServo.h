@@ -5,6 +5,7 @@
 
 #include "Servo.h"
 #include "DCMotor.h"
+#include "EdgeVelocity.h"
 #include "Pid.h"
 #include "Pin.h"
 
@@ -127,6 +128,8 @@ namespace MotorDrivers {
         uint32_t _report_ticks  = 0;
         float    _last_drive    = 0.0f;
         uint32_t _jam_ticks     = 0;
+
+        EdgeVelocity _edge_vel;
 
         volatile bool _homing = false;
 

@@ -115,6 +115,7 @@ namespace MotorDrivers {
         _setpoint_vel  = 0.0f;
         _measured_vel  = 0.0f;
         _jam_ticks     = 0;
+        _edge_vel.reset();
         _pid->reset();
     }
 
@@ -176,9 +177,10 @@ namespace MotorDrivers {
     }
 
     void DCServo::update() {
-        const int32_t raw      = _encoder->read();
-        const float   measured = float(_encoder_invert ? -raw : raw);
-        const float   setpoint = float(get_axis_steps(_axis)) * _counts_per_step;
+        const EncoderSample sample   = _encoder->sample();
+        const int32_t       count    = _encoder_invert ? -sample.count : sample.count;
+        const float         measured = float(count);
+        const float         setpoint = float(get_axis_steps(_axis)) * _counts_per_step;
 
         update_filters();
 
@@ -219,7 +221,15 @@ namespace MotorDrivers {
         }
 
         _setpoint_vel += ((setpoint - _last_setpoint) / _dt - _setpoint_vel) * _vel_alpha;
-        _measured_vel += ((measured - _last_measured) / _dt - _measured_vel) * _vel_alpha;
+        float measured_rate = (measured - _last_measured) / _dt;
+        if (sample.timed) {
+            measured_rate = _edge_vel.update(count, sample.edge_time, _dt, float(_encoder->timer_hz()));
+        } else if (_encoder->has_timing()) {
+            // Edges kept the snapshot from settling, and the estimator
+            // cannot skip a count without misreading the next span.
+            _edge_vel.reset();
+        }
+        _measured_vel += (measured_rate - _measured_vel) * _vel_alpha;
         _last_setpoint = setpoint;
         _last_measured = measured;
 
@@ -349,8 +359,10 @@ namespace MotorDrivers {
         // @config velocity_filter_hz
         // @default 100
         // @tuning typical
-        // Low-pass cutoff on both the measured and setpoint velocities, which are otherwise
-        // quantized to whole counts per control period.
+        // Low-pass cutoff on both the measured and setpoint velocities.  The setpoint
+        // velocity is quantized to whole steps per control period, and so is the measured
+        // one on encoders without edge timing (see the startup log); with edge timing the
+        // measured velocity only needs this for noise.
         handler.item("velocity_filter_hz", _velocity_filter_hz, 1.0f, 10000.0f);
 
         // @config max_following_error
@@ -446,7 +458,8 @@ namespace MotorDrivers {
 
     void DCServo::config_message() {
         log_info("    " << name() << " Encoder A:" << _encoder_a_pin.name() << " B:" << _encoder_b_pin.name() << " period:" << _update_ms
-                        << "ms" << (_encoder_invert ? " inverted" : ""));
+                        << "ms" << (_encoder_invert ? " inverted" : "")
+                        << (_encoder->has_timing() ? " edge timed" : " count differenced"));
     }
 
     // Configuration registration
