@@ -229,8 +229,10 @@ namespace MotorDrivers {
         if (_tripped) {
             // Hold off until the alarm has actually been raised and then
             // cleared; checking only for "not in alarm" would release the
-            // trip before the event has even been processed.
-            if (state_is(State::Alarm)) {
+            // trip before the event has even been processed.  The trip raises
+            // a hard stop, which is Critical; a reset only passes through
+            // Alarm when there are unhomed axes, so Critical must count too.
+            if (state_is(State::Alarm) || state_is(State::Critical)) {
                 _trip_alarmed = true;
             } else if (_trip_alarmed) {
                 _tripped = false;
