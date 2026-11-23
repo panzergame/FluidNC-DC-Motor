@@ -35,19 +35,46 @@
 #    define CLOCK_FREQUENCY 80000000
 #endif
 
-static objnum_t allocateChannel() {
-    static objnum_t nextLedcChannel = 0;
+// LEDC_CHANNEL_MAX and LEDC_TIMER_MAX count per speed mode; only the ESP32
+// has a second (high speed) mode, which doubles both.
+struct LedcTimer {
+    uint32_t frequency;
+    uint8_t  bits;
+};
 
-    // Increment by 2 because there are only 4 timers so only
-    // four completely independent channels.  We could be
-    // smarter about this and look for an unallocated channel
-    // that is already on the same frequency.  There is some
-    // code for that in PinUsers/PwmPin.cpp TryGrabChannel()
+static LedcTimer ledcTimers[LEDC_SPEED_MODE_MAX][LEDC_TIMER_MAX]   = {};
+static int       ledcTimersUsed[LEDC_SPEED_MODE_MAX]               = {};
+static int       ledcChannelsUsed[LEDC_SPEED_MODE_MAX]             = {};
 
-    Assert(nextLedcChannel < LEDC_CHANNEL_MAX, "Out of LEDC PwmPin channels");
-    auto result = nextLedcChannel;
-    nextLedcChannel += (int(LEDC_CHANNEL_MAX) / int(LEDC_TIMER_MAX));
-    return result;
+struct LedcAllocation {
+    ledc_mode_t  mode;
+    ledc_timer_t timer;
+    int          channel;
+    bool         newTimer;
+};
+
+// Pins at the same frequency share a timer, so the channel count rather than
+// the timer count bounds how many PWM pins can exist.
+static LedcAllocation allocateChannel(uint32_t frequency) {
+    for (int mode = 0; mode < LEDC_SPEED_MODE_MAX; ++mode) {
+        if (ledcChannelsUsed[mode] == LEDC_CHANNEL_MAX) {
+            continue;
+        }
+        for (int timer = 0; timer < ledcTimersUsed[mode]; ++timer) {
+            if (ledcTimers[mode][timer].frequency == frequency) {
+                return { ledc_mode_t(mode), ledc_timer_t(timer), ledcChannelsUsed[mode]++, false };
+            }
+        }
+    }
+    for (int mode = 0; mode < LEDC_SPEED_MODE_MAX; ++mode) {
+        if (ledcChannelsUsed[mode] < LEDC_CHANNEL_MAX && ledcTimersUsed[mode] < LEDC_TIMER_MAX) {
+            int timer                      = ledcTimersUsed[mode]++;
+            ledcTimers[mode][timer].frequency = frequency;
+            return { ledc_mode_t(mode), ledc_timer_t(timer), ledcChannelsUsed[mode]++, true };
+        }
+    }
+    Assert(false, "Out of LEDC PwmPin channels");
+    return {};
 }
 
 // Calculate the highest PwmPin precision in bits for the desired frequency
@@ -73,46 +100,48 @@ static uint8_t calc_pwm_precision(uint32_t frequency) {
 }
 
 PwmPin::PwmPin(pinnum_t gpio, bool isActiveLow, uint32_t frequency) : _gpio(gpio), _frequency(frequency) {
-    uint8_t bits       = calc_pwm_precision(frequency);
-    _period            = (1 << bits) - 1;
-    _channel           = allocateChannel();
-    ledc_timer_t timer = ledc_timer_t((_channel / 2) % 4);
+    auto        alloc     = allocateChannel(frequency);
+    ledc_mode_t speedmode = alloc.mode;
+    _channel              = objnum_t(int(speedmode) * LEDC_CHANNEL_MAX + alloc.channel);
+    auto&       timer     = ledcTimers[speedmode][alloc.timer];
 
-#ifdef SOC_LEDC_SUPPORT_HS_MODE
-    // Only ESP32 has LEDC_HIGH_SPEED_MODE with 8 channels per group
-    ledc_mode_t speedmode = ledc_mode_t(int(_channel) / (int(LEDC_CHANNEL_MAX) / int(LEDC_SPEED_MODE_MAX)));
-#else
-    ledc_mode_t speedmode = LEDC_LOW_SPEED_MODE;
-#endif
+    // Reconfiguring a shared timer would restart the channels already on it.
+    if (alloc.newTimer) {
+        uint8_t bits = calc_pwm_precision(frequency);
 
-    ledc_timer_config_t ledc_timer = {};
-    ledc_timer.speed_mode          = speedmode;
-    ledc_timer.duty_resolution     = ledc_timer_bit_t(bits);
-    ledc_timer.timer_num           = timer;
-    ledc_timer.freq_hz             = frequency;
-    ledc_timer.clk_cfg             = LEDC_DEFAULT_CLK;
+        ledc_timer_config_t ledc_timer = {};
+        ledc_timer.speed_mode          = speedmode;
+        ledc_timer.duty_resolution     = ledc_timer_bit_t(bits);
+        ledc_timer.timer_num           = alloc.timer;
+        ledc_timer.freq_hz             = frequency;
+        ledc_timer.clk_cfg             = LEDC_DEFAULT_CLK;
 
-    size_t attempt = 0;
-    for (attempt = 0; attempt < 5; ++attempt) {
-        if (ledc_timer_config(&ledc_timer) != ESP_OK) {
-            log_error("ledc timer setup failed. Frequency: " << frequency << " hz; duty resolution: " << bits);
-            --bits;
-        } else {
-            break;
+        size_t attempt = 0;
+        for (attempt = 0; attempt < 5; ++attempt) {
+            if (ledc_timer_config(&ledc_timer) != ESP_OK) {
+                log_error("ledc timer setup failed. Frequency: " << frequency << " hz; duty resolution: " << bits);
+                ledc_timer.duty_resolution = ledc_timer_bit_t(--bits);
+            } else {
+                break;
+            }
         }
+        if (attempt == 5) {
+            Assert(false, "LEDC timer setup failed");
+        }
+        timer.bits = bits;
     }
-    if (attempt == 5) {
-        Assert(false, "LEDC timer setup failed");
-    }
+    uint8_t bits = timer.bits;
+    _period      = (1 << bits) - 1;
 
     uint32_t maxFrequency = uint32_t(CLOCK_FREQUENCY / float(1 << bits));
-    log_info("    Max frequency of LEDC set at " << maxFrequency << "; duty resolution: " << bits << "; channel " << _channel);
+    log_info("    Max frequency of LEDC set at " << maxFrequency << "; duty resolution: " << bits << "; channel " << _channel << "; timer "
+                                                 << alloc.timer);
 
     ledc_channel_config_t ledc_channel = { .gpio_num   = int(_gpio),
                                            .speed_mode = speedmode,
-                                           .channel    = ledc_channel_t(_channel),
+                                           .channel    = ledc_channel_t(alloc.channel),
                                            .intr_type  = LEDC_INTR_DISABLE,
-                                           .timer_sel  = timer,
+                                           .timer_sel  = alloc.timer,
                                            .duty       = 0,
                                            .hpoint     = 0,
                                            .flags      = { .output_invert = isActiveLow } };
@@ -122,9 +151,8 @@ PwmPin::PwmPin(pinnum_t gpio, bool isActiveLow, uint32_t frequency) : _gpio(gpio
     }
 
     // We write 1 item to ensure the complete configuration is correct of both timer and ledc:
-    auto chan_num = ledc_channel_t(_channel % 8);
-    ledc_set_duty(speedmode, chan_num, 0);
-    ledc_update_duty(speedmode, chan_num);
+    ledc_set_duty(speedmode, ledc_channel_t(alloc.channel), 0);
+    ledc_update_duty(speedmode, ledc_channel_t(alloc.channel));
 }
 
 // cppcheck-suppress unusedFunction
@@ -136,15 +164,9 @@ void IRAM_ATTR PwmPin::setDuty(uint32_t duty) {
 
     // We might be able to use ledc_duty_config() which is IRAM_ATTR
 
-    objnum_t c  = _channel & 7;
-    bool     on = duty != 0;
-
-#ifdef SOC_LEDC_SUPPORT_HS_MODE
-    // Only ESP32 has LEDC_HIGH_SPEED_MODE with 8 channels per group
-    ledc_mode_t speedmode = ledc_mode_t(int(_channel) / (int(LEDC_CHANNEL_MAX) / int(LEDC_SPEED_MODE_MAX)));
-#else
-    ledc_mode_t speedmode = LEDC_LOW_SPEED_MODE;
-#endif
+    objnum_t    c         = _channel % LEDC_CHANNEL_MAX;
+    ledc_mode_t speedmode = ledc_mode_t(_channel / LEDC_CHANNEL_MAX);
+    bool        on        = duty != 0;
 
     // ledc_set_duty(speedmode, ledc_channel_t(c), duty);
     // This does:
