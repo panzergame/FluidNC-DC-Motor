@@ -8,10 +8,12 @@
   is on ESP-IDF 4.4, which predates driver/pulse_cnt.h.  The legacy API is
   still present, deprecated, in ESP-IDF 5.
 
-  Edge timestamps come from an MCPWM capture unit: two of its channels latch
-  the capture timer on every edge of A and of B.  The channels of a unit share
-  one timer, so each timed encoder takes a whole unit, and encoders beyond the
-  unit count are counted but not timed.
+  Edge timestamps come from MCPWM capture channels latching a capture timer
+  on every edge of A and of B.  Each MCPWM group has one capture timer shared
+  by three channels, so an encoder takes two channels of one group when it
+  can.  Otherwise it takes one spare channel from each of two groups, and the
+  constant offset between their timers is measured once at setup.  Encoders
+  beyond the channel count are counted but not timed.
 */
 #include "Config.h"
 #include "Driver/QuadratureEncoder.h"
@@ -23,9 +25,8 @@
 #if SOC_MCPWM_SUPPORTED
 #    include <driver/mcpwm.h>
 #    include <esp_idf_version.h>
-#    if ESP_IDF_VERSION_MAJOR < 5
-#        include <hal/mcpwm_ll.h>
-#    endif
+#    include <hal/mcpwm_ll.h>
+#    include <freertos/FreeRTOS.h>
 #endif
 
 // The counter resets to zero when it reaches either limit, so the raw value
@@ -49,15 +50,74 @@ static int32_t allocateUnit() {
 // The capture timer runs from APB regardless of the MCPWM group clock.
 static constexpr uint32_t capture_timer_hz = apb_mhz * 1000000;
 
-static int32_t allocateTimerUnit() {
-    static int32_t nextUnit = 0;
-    if (nextUnit >= SOC_MCPWM_GROUPS) {
-        return -1;
+static int capChannelsUsed[SOC_MCPWM_GROUPS] = {};
+
+struct CaptureInput {
+    int unit;
+    int channel;
+};
+
+// Both inputs in one group first, so that split encoders only appear once the
+// groups are down to one spare channel each.
+static bool allocateCapture(CaptureInput& a, CaptureInput& b) {
+    for (int unit = 0; unit < SOC_MCPWM_GROUPS; ++unit) {
+        if (capChannelsUsed[unit] + 2 <= SOC_MCPWM_CAPTURE_CHANNELS_PER_TIMER) {
+            a = { unit, capChannelsUsed[unit]++ };
+            b = { unit, capChannelsUsed[unit]++ };
+            return true;
+        }
     }
-    return nextUnit++;
+    int first = -1;
+    for (int unit = 0; unit < SOC_MCPWM_GROUPS; ++unit) {
+        if (capChannelsUsed[unit] < SOC_MCPWM_CAPTURE_CHANNELS_PER_TIMER) {
+            if (first < 0) {
+                first = unit;
+            } else {
+                a = { first, capChannelsUsed[first]++ };
+                b = { unit, capChannelsUsed[unit]++ };
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
-static bool enableCapture(mcpwm_unit_t unit, mcpwm_capture_channel_id_t channel, mcpwm_io_signals_t signal, pinnum_t pin) {
+static uint32_t captureValue(int unit, int channel) {
+    return mcpwm_ll_capture_get_value(MCPWM_LL_GET_HW(unit), channel);
+}
+
+// Latches both capture timers by software back to back; the two register
+// writes are a few APB cycles apart, which is far below an edge period.  An
+// encoder edge landing between a trigger and its read corrupts one attempt,
+// so the result must repeat before it is trusted.
+static bool measureCaptureOffset(const CaptureInput& a, const CaptureInput& b, uint32_t& offset) {
+    static portMUX_TYPE mux      = portMUX_INITIALIZER_UNLOCKED;
+    uint32_t            previous = 0;
+    for (int attempt = 0; attempt < 10; ++attempt) {
+        portENTER_CRITICAL(&mux);
+        mcpwm_ll_trigger_soft_capture(MCPWM_LL_GET_HW(a.unit), a.channel);
+        mcpwm_ll_trigger_soft_capture(MCPWM_LL_GET_HW(b.unit), b.channel);
+        uint32_t va = captureValue(a.unit, a.channel);
+        uint32_t vb = captureValue(b.unit, b.channel);
+        portEXIT_CRITICAL(&mux);
+
+        uint32_t current = vb - va;
+        if (attempt > 0) {
+            int32_t diff = int32_t(current - previous);
+            if (diff >= -2 && diff <= 2) {
+                offset = current;
+                return true;
+            }
+        }
+        previous = current;
+    }
+    return false;
+}
+
+static bool enableCapture(const CaptureInput& input, pinnum_t pin) {
+    auto unit    = mcpwm_unit_t(input.unit);
+    auto channel = mcpwm_capture_channel_id_t(MCPWM_SELECT_CAP0 + input.channel);
+    auto signal  = mcpwm_io_signals_t(MCPWM_CAP_0 + input.channel);
     // Only adds the pin to MCPWM's input; the PCNT routing is untouched.
     if (mcpwm_gpio_init(unit, signal, int(pin)) != ESP_OK) {
         return false;
@@ -133,20 +193,29 @@ QuadratureEncoder::QuadratureEncoder(pinnum_t a, pinnum_t b, uint32_t filter_ns)
     _settle_us = (filter_val * 1000 / apb_mhz + 999) / 1000 + 1;
 
 #if SOC_MCPWM_SUPPORTED
-    int32_t timer_unit = allocateTimerUnit();
-    if (timer_unit < 0) {
-        log_warn("Out of MCPWM units for encoder timing; velocity will be count based");
+    CaptureInput cap_a, cap_b;
+    if (!allocateCapture(cap_a, cap_b)) {
+        log_warn("Out of MCPWM capture channels for encoder timing; velocity will be count based");
         return;
     }
-    auto t = mcpwm_unit_t(timer_unit);
-    if (!enableCapture(t, MCPWM_SELECT_CAP0, MCPWM_CAP_0, a) || !enableCapture(t, MCPWM_SELECT_CAP1, MCPWM_CAP_1, b)) {
+    if (!enableCapture(cap_a, a) || !enableCapture(cap_b, b)) {
         log_error("Encoder timing setup failed; velocity will be count based");
         return;
     }
-    _last_cap_a  = mcpwm_capture_signal_get_value(t, MCPWM_SELECT_CAP0);
-    _last_cap_b  = mcpwm_capture_signal_get_value(t, MCPWM_SELECT_CAP1);
-    _edge_time   = _last_cap_a;
-    _timer_unit  = timer_unit;
+    if (cap_a.unit != cap_b.unit) {
+        if (!measureCaptureOffset(cap_a, cap_b, _b_offset)) {
+            log_error("Encoder capture timers could not be aligned; velocity will be count based");
+            return;
+        }
+        log_info("    Encoder timing split across MCPWM" << cap_a.unit << " and MCPWM" << cap_b.unit << ", offset " << _b_offset);
+    }
+    _cap_unit_a = int8_t(cap_a.unit);
+    _cap_chan_a = int8_t(cap_a.channel);
+    _cap_unit_b = int8_t(cap_b.unit);
+    _cap_chan_b = int8_t(cap_b.channel);
+    _last_cap_a = captureValue(_cap_unit_a, _cap_chan_a);
+    _last_cap_b = captureValue(_cap_unit_b, _cap_chan_b) - _b_offset;
+    _edge_time  = _last_cap_a;
 #endif
 }
 
@@ -182,17 +251,18 @@ int32_t QuadratureEncoder::read() {
 EncoderSample QuadratureEncoder::sample() {
     EncoderSample s = { 0, _edge_time, false };
 #if SOC_MCPWM_SUPPORTED
-    if (_timer_unit >= 0) {
-        auto unit = mcpwm_unit_t(_timer_unit);
+    if (_cap_unit_a >= 0) {
+        auto cap_a = [this] { return captureValue(_cap_unit_a, _cap_chan_a); };
+        auto cap_b = [this] { return captureValue(_cap_unit_b, _cap_chan_b) - _b_offset; };
         // An edge between reading the captures and reading the count would
         // pair a timestamp with the wrong count, so retry until the captures
         // hold still around the count.
         for (int tries = 0; tries < 3; ++tries) {
-            uint32_t a = mcpwm_capture_signal_get_value(unit, MCPWM_SELECT_CAP0);
-            uint32_t b = mcpwm_capture_signal_get_value(unit, MCPWM_SELECT_CAP1);
+            uint32_t a = cap_a();
+            uint32_t b = cap_b();
             esp_rom_delay_us(_settle_us);
             s.count = read();
-            if (a != mcpwm_capture_signal_get_value(unit, MCPWM_SELECT_CAP0) || b != mcpwm_capture_signal_get_value(unit, MCPWM_SELECT_CAP1)) {
+            if (a != cap_a() || b != cap_b()) {
                 continue;
             }
             // A channel that has not moved for a long time holds a value the

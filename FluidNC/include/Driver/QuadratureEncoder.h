@@ -29,7 +29,7 @@ public:
 
     // True if sample() can timestamp edges.  Timing hardware is scarcer than
     // counters, so an encoder can be valid without it.
-    bool has_timing() const { return _timer_unit >= 0; }
+    bool has_timing() const { return _cap_unit_a >= 0; }
     uint32_t timer_hz() const;
 
     // Counts since construction.  The hardware counter is narrower than the
@@ -47,7 +47,14 @@ private:
     int16_t _last_raw = 0;
     int32_t _count    = 0;
 
-    int32_t  _timer_unit = -1;
+    // A and B may be latched by different MCPWM groups, whose capture timers
+    // are free-running copies of each other; _b_offset maps B's timer onto
+    // A's.
+    int8_t   _cap_unit_a = -1;
+    int8_t   _cap_chan_a = 0;
+    int8_t   _cap_unit_b = -1;
+    int8_t   _cap_chan_b = 0;
+    uint32_t _b_offset   = 0;
     uint32_t _settle_us  = 1;
     uint32_t _last_cap_a = 0;
     uint32_t _last_cap_b = 0;
