@@ -1,0 +1,113 @@
+board: None
+name: DC servo bench test v2
+
+start:
+  must_home: false
+
+stepping:
+  engine: RMT
+
+kinematics:
+  Cartesian:
+
+axes:
+  x:
+    steps_per_mm: 1763
+    max_rate_mm_per_min: 1200
+    acceleration_mm_per_sec2: 50
+    max_travel_mm: 115
+    homing:
+      cycle: 1
+      mpos_mm: 115
+      seek_mm_per_min: 500
+      feed_mm_per_min: 60
+      feed_scaler: 3
+    motor0:
+      dc_servo:
+        encoder_a_pin: gpio.34
+        encoder_b_pin: gpio.35
+        counts_per_step: 0.1
+        position_kp: 40
+        velocity_filter_hz: 200
+        max_following_error: 200
+        position_deadband: 15
+        homing_stall_error: 30
+        homing_stall_ms: 100
+        homing_max_drive: 40
+        dc_motor:
+          in1_pin: gpio.32
+          in2_pin: gpio.33
+          slow_decay: true
+        velocity_pid:
+          kp: 0.0105
+          ki: 0.625
+          kff: 0.00311
+          kfs: 9.12
+
+  y:
+    steps_per_mm: 1500
+    max_rate_mm_per_min: 1200
+    acceleration_mm_per_sec2: 50
+    max_travel_mm: 160
+    homing:
+      cycle: 1
+      mpos_mm: 170
+      seek_mm_per_min: 500
+      feed_mm_per_min: 60
+      feed_scaler: 3
+      positive_direction: false
+    motor0:
+      limit_neg_pin: gpio.13
+      dc_servo:
+        encoder_a_pin: gpio.36
+        encoder_b_pin: gpio.39
+        counts_per_step: 0.1
+        position_kp: 80
+        velocity_filter_hz: 400
+        max_following_error: 200
+        # Moving takes ~35% drive, which winds up the drive train; once the
+        # drive is cut the motor springs back 26-31 counts against the last
+        # move.  A band inside that re-drives into the wind-up and hunts.
+        position_deadband: 40
+        dc_motor:
+          in1_pin: gpio.25
+          in2_pin: gpio.26
+          slow_decay: true
+        velocity_pid:
+          kp: 0.01536
+          ki: 1.094
+          kff: 0.004594
+          kfs: 9.416
+
+  z:
+    steps_per_mm: 1000
+    max_rate_mm_per_min: 1200
+    acceleration_mm_per_sec2: 50
+    max_travel_mm: 20
+    homing:
+      cycle: 1
+      seek_mm_per_min: 500
+      feed_mm_per_min: 60
+      feed_scaler: 3
+    motor0:
+      dc_servo:
+        encoder_a_pin: gpio.18
+        encoder_b_pin: gpio.19
+        encoder_invert: true
+        counts_per_step: 0.1
+        position_kp: 40
+        velocity_filter_hz: 200
+        max_following_error: 200
+        position_deadband: 15
+        homing_stall_error: 30
+        homing_stall_ms: 100
+        homing_max_drive: 40
+        dc_motor:
+          in1_pin: gpio.27
+          in2_pin: gpio.4
+          slow_decay: true
+        velocity_pid:
+          kp: 0.0105
+          ki: 0.625
+          kff: 0.00311
+          kfs: 9.12
