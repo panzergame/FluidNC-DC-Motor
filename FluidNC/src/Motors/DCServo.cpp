@@ -290,9 +290,9 @@ namespace MotorDrivers {
         if (sample.timed) {
             measured_rate = _edge_vel.update(count, sample.edge_time, _dt, float(_encoder->timer_hz()));
         } else if (_encoder->has_timing()) {
-            // Edges kept the snapshot from settling, and the estimator
-            // cannot skip a count without misreading the next span.
-            _edge_vel.reset();
+            // Edges kept the snapshot from settling; a span across the untimed
+            // count would be misread, so only the speed carries over.
+            _edge_vel.skip();
         }
         _measured_vel += (measured_rate - _measured_vel) * _vel_alpha;
         _last_setpoint = setpoint;

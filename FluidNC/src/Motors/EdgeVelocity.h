@@ -15,6 +15,9 @@ namespace MotorDrivers {
     public:
         // Forgets the motion, not the learnt edge spacing.
         void reset() { _primed = false; }
+        // After a count that could not be timed: the marks no longer form one run of
+        // edges, but the speed and direction hold until the next span.
+        void skip() { _n_marks = 0; }
 
         // count and edge_time must come from one consistent encoder sample;
         // edge_time is in ticks of timer_hz.  Returns counts per second.
