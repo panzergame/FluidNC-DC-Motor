@@ -13,7 +13,11 @@ Phases:
   4. Optionally position_deadband: idle_disable folds whatever error is left
      at disable time into the offset, so the band is the largest error a move
      may leave behind.  Picks the smallest band the axis actually comes to
-     rest inside of, instead of holding drive against stiction.
+     rest inside of, instead of holding drive against stiction.  The board's
+     overshoot_counts is held fixed during the sweep; the parked band reaches
+     position_deadband past the overshoot point, so the band need not clear it.
+     Band 0 is skipped when overshoot_counts is set, since it disables the
+     overshoot too.
 
 Gains are changed live with $ settings and are not saved; the tuned values are
 left applied (or the originals restored on failure / Ctrl-C).
@@ -172,7 +176,7 @@ class Board:
 class Tuner:
     PARAM_KEYS = (
         "kff", "kfs", "kp", "ki", "kd", "position_kp",
-        "velocity_filter_hz", "setpoint_filter_hz", "position_deadband",
+        "velocity_filter_hz", "setpoint_filter_hz", "position_deadband", "overshoot_counts",
     )
 
     def __init__(self, board, args):
@@ -189,6 +193,7 @@ class Tuner:
             "velocity_filter_hz": f"{self.base}/velocity_filter_hz",
             "setpoint_filter_hz": f"{self.base}/setpoint_filter_hz",
             "position_deadband": f"{self.base}/position_deadband",
+            "overshoot_counts": f"{self.base}/overshoot_counts",
         }
         self.original = {}
         self.good = {}
@@ -363,9 +368,12 @@ class Tuner:
         return out
 
     def tune_deadband(self, gains):
-        log("Phase 4: position_deadband")
+        log(f"Phase 4: position_deadband (overshoot_counts {gains['overshoot_counts']:.0f})")
         results = {}
-        for band in (0, 5, 10, 20, 35, 50):
+        bands = (0, 5, 10, 20, 35, 50)
+        if gains["overshoot_counts"]:
+            bands = bands[1:]
+        for band in bands:
             cand = dict(gains, position_deadband=band)
             self.apply(cand)
             try:
@@ -506,6 +514,7 @@ def yaml_snippet(axis, g):
         f"        velocity_filter_hz: {g['velocity_filter_hz']:.4g}\n"
         f"        setpoint_filter_hz: {g['setpoint_filter_hz']:.4g}\n"
         f"        position_deadband: {g['position_deadband']:.0f}\n"
+        f"        overshoot_counts: {g['overshoot_counts']:.0f}\n"
         f"        velocity_pid:\n"
         f"          kp: {g['kp']:.4g}\n          ki: {g['ki']:.4g}\n          kd: {g['kd']:.4g}\n"
         f"          kff: {g['kff']:.4g}\n          kfs: {g['kfs']:.4g}\n"
