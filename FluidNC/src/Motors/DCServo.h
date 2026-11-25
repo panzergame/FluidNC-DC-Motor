@@ -90,7 +90,6 @@ namespace MotorDrivers {
         float              _sp_alpha     = 1.0f;
         float              _vel_alpha_hz = -1.0f;  // cutoffs the alphas match, so $ changes take effect
         float              _sp_alpha_hz  = -1.0f;
-        bool               _has_errors   = false;
 
         // Control and stall state, touched only by the control task.
         float    _offset        = 0.0f;  // encoder counts -> setpoint counts

@@ -84,7 +84,6 @@ namespace MotorDrivers {
                                          _encoder_filter_ns);
         if (!_encoder->valid()) {
             log_config_error("    " << name() << " disabled: no encoder");
-            _has_errors = true;
             return;
         }
 
