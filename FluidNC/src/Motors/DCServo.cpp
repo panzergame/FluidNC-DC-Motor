@@ -318,7 +318,8 @@ namespace MotorDrivers {
         float drive        = 0.0f;
         float drive_limit  = _homing ? _homing_max_drive : Pid::max_output;
         bool  at_rest      = _position_deadband && state_is(State::Idle);
-        if (_motion_dir != 0) {
+        // At rest the motion direction lingers for a while; rest_overshoot() owns _rest_dir by then.
+        if (_motion_dir != 0 && !at_rest) {
             _rest_dir = _motion_dir;
         }
         if (!at_rest) {
