@@ -446,7 +446,7 @@ namespace MotorDrivers {
         handler.item("setpoint_filter_hz", _setpoint_filter_hz, 1.0f, 10000.0f);
 
         // @config max_following_error
-        // @default 0
+        // @default 100
         // @tuning per-machine
         // Position error, in encoder counts, beyond which the motor coasts and the machine
         // alarms.  0 disables the check.

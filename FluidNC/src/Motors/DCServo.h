@@ -68,7 +68,7 @@ namespace MotorDrivers {
         float    _position_kp         = 0.0f;
         float    _velocity_filter_hz  = 100.0f;
         float    _setpoint_filter_hz  = 50.0f;
-        uint32_t _max_following_error = 0;
+        uint32_t _max_following_error = 100;
         uint32_t _position_deadband   = 0;
         uint32_t _overshoot_counts    = 0;
         uint32_t _report_ms           = 0;
