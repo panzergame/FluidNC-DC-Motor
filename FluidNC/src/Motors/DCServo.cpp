@@ -227,18 +227,18 @@ namespace MotorDrivers {
         _motor->softLimit(_stall_positive, false);
     }
 
-    // Releasing only outside position_deadband from the real target keeps the spring-back
-    // from re-triggering the drive.
+    // Parked, the band runs from position_deadband short of the target to position_deadband
+    // past the overshoot point, so neither the coast-through nor the spring-back re-drives.
     bool DCServo::rest_overshoot(float error, float& loop_error) {
         if (_parked) {
-            if (std::fabs(error) <= float(_position_deadband)) {
+            float e = _rest_dir ? error * float(_rest_dir) : std::fabs(error);  // positive short of the target
+            if (e <= float(_position_deadband) && e >= -float(_overshoot_counts + _position_deadband)) {
                 return true;
             }
             _parked   = false;
             _rest_dir = error > 0.0f ? 1 : -1;
         }
-        float overshoot = float(std::min(_overshoot_counts, _position_deadband));
-        loop_error      = error + float(_rest_dir) * overshoot;
+        loop_error = error + float(_rest_dir) * float(_overshoot_counts);
         if (_rest_dir == 0 || loop_error * float(_rest_dir) <= 0.0f) {
             _parked = true;
         }
@@ -375,6 +375,9 @@ namespace MotorDrivers {
         Assert(!_encoder_a_pin.undefined(), "encoder_a_pin should be configured.");
         Assert(!_encoder_b_pin.undefined(), "encoder_b_pin should be configured.");
         Assert(_encoder_a_pin.index() != _encoder_b_pin.index(), "encoder_a_pin and encoder_b_pin must be different pins");
+        if (_overshoot_counts && !_position_deadband) {
+            log_warn(name() << " overshoot_counts has no effect without position_deadband");
+        }
     }
 
     void DCServo::group(Configuration::HandlerBase& handler) {
@@ -463,9 +466,11 @@ namespace MotorDrivers {
         // @default 0
         // @tuning per-machine
         // With position_deadband set, the motor is driven this many encoder counts past the
-        // target, in the direction it approached from, before it coasts, so the drive train
-        // springing back leaves it on target: the spring-back seen with 0.  It then coasts
-        // until the error leaves position_deadband, and is capped to it.  0 disables it.
+        // target, in the direction it approached from, before the drive drops, so the drive
+        // train springing back leaves it on target: the spring-back seen with 0.  It then
+        // stays parked until the error is more than position_deadband short of the target or
+        // past the overshoot point, so position_deadband need not clear the overshoot.
+        // 0 disables it.
         handler.item("overshoot_counts", _overshoot_counts, 0, 10000);
 
         // @config stall_ms

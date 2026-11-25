@@ -30,7 +30,7 @@ axes:
         position_kp: 40
         velocity_filter_hz: 200
         max_following_error: 200
-        # Spring-back ~6 counts; the band only has to clear the overshoot point.
+        # Spring-back ~6 counts.
         position_deadband: 8
         overshoot_counts: 4
         homing_stall_error: 30
@@ -69,8 +69,8 @@ axes:
         max_following_error: 200
         # Moving takes ~35% drive, which winds up the drive train; once the
         # drive is cut the motor springs back ~17-20 counts against the last
-        # move.  The band has to clear the overshoot point (up to 21 counts
-        # seen while parked), or the spring-back re-drives and hunts.
+        # move.  Parked, the band also reaches position_deadband past the
+        # overshoot point, which covers the coast-through (up to 21 counts).
         position_deadband: 25
         overshoot_counts: 18
         dc_motor:
