@@ -20,42 +20,19 @@ namespace Machine {
 
 namespace MotorDrivers {
     /*
-        Closed-loop brushed DC motor: a DCMotor power stage, a quadrature
-        encoder, and a cascaded position/velocity loop.
-
-        The planner and step segment generator already enforce the axis
-        acceleration and max_rate, and the step ISR advances the axis step
-        count along that profile whether or not a stepper is attached.  That
-        count is the position setpoint here, so this driver does no motion
-        profiling of its own - only tracking:
-
-            velocity command = setpoint velocity + position_kp * position error
-            drive            = velocity_pid(velocity command, measured velocity)
-
-        The loop runs in its own task rather than an ISR, because it is float
-        math and the ESP32 does not save FPU state on interrupt entry.
-
-        There is no index pulse, so homing comes either from limit switches
-        or, with homing_stall_error set, from driving into a hard stop: when
-        the axis stops following the setpoint during a homing approach, the
-        motor's limit is raised in software as if a switch had fired.
+        Closed-loop brushed DC motor: a DCMotor power stage, a quadrature encoder and a
+        position/velocity loop.  The loop runs in its own task rather than an ISR, because
+        it is float math and the ESP32 does not save FPU state on interrupt entry.
     */
     class DCServo : public Servo {
     public:
         DCServo(const char* name) : Servo(name) {}
 
+        // Overrides for inherited methods
         void init() override;
-
-        // Called from the protocol task, so it only flags the mode; the
-        // control task acts on it.
-        bool set_homing_mode(bool isHoming) override;
+        bool set_homing_mode(bool isHoming) override;  // protocol task: only flags the mode
         bool can_self_home() override { return _homing_stall_error != 0; }
-
-        // Called from ISR context by Axes, so it only flags the request; the
-        // control task does the coasting.
-        void set_disable(bool disable) override;
-
-        // One control tick.
+        void set_disable(bool disable) override;  // ISR context: only flags it, the control task coasts
         void update() override;
 
         // Configuration handlers:
@@ -68,22 +45,13 @@ namespace MotorDrivers {
     private:
         static void control_task(void* arg);
 
-        // Takes the current encoder reading as being where the setpoint is,
-        // so control resumes from rest without chasing an old error.
-        void resync(float setpoint, float measured);
+        void resync(float setpoint, float measured);  // resume from rest without chasing an old error
         void update_filters();
         void track_motion(float setpoint_delta);
+        bool rest_overshoot(float error, float& loop_error);  // true while the motor should coast
+        void trip();                                          // coasts and alarms; the caller logs why
 
-        // At rest with overshoot_counts set: returns true while the motor
-        // should coast, otherwise sets the error the loop should act on.
-        bool rest_overshoot(float error, float& loop_error);
-
-        // Coasts the motor and alarms the machine; the caller logs why.
-        void trip();
-
-        // Detects the hard stop while approaching, and releases the soft
-        // limit once the axis has backed off it.  Returns true if the motor
-        // is being held at the stop, in which case it must not be driven.
+        // Returns true while the motor is held at a hard stop and must not be driven.
         bool stall_check(float setpoint, float measured, float error, bool approaching);
         void release_stall();
 
@@ -120,12 +88,11 @@ namespace MotorDrivers {
         float              _dt           = 0.001f;
         float              _vel_alpha    = 1.0f;
         float              _sp_alpha     = 1.0f;
-        // Cutoffs the alphas were computed for, so runtime $ changes take effect.
-        float              _vel_alpha_hz = -1.0f;
+        float              _vel_alpha_hz = -1.0f;  // cutoffs the alphas match, so $ changes take effect
         float              _sp_alpha_hz  = -1.0f;
         bool               _has_errors   = false;
 
-        // Control state, touched only by the control task.
+        // Control and stall state, touched only by the control task.
         float    _offset        = 0.0f;  // encoder counts -> setpoint counts
         float    _last_setpoint = 0.0f;
         float    _last_measured = 0.0f;
@@ -138,23 +105,18 @@ namespace MotorDrivers {
         float    _last_drive    = 0.0f;
         uint32_t _jam_ticks     = 0;
 
-        // Direction of the last approach to the target, and whether the
-        // motor has reached the overshoot point and coasts since.
-        int32_t  _rest_dir      = 0;
-        bool     _parked        = false;
+        int32_t _rest_dir = 0;      // direction of the last approach to the target
+        bool    _parked   = false;  // reached the overshoot point and coasting since
 
-        // Direction the setpoint last stepped in, held across the gaps
-        // between steps; 0 once the trajectory has stopped.  Gives the
-        // friction feedforward its sign.
-        int32_t  _motion_dir    = 0;
-        uint32_t _still_ticks   = 0;
-        uint32_t _step_gap      = 0;  // ticks between the last two steps
+        int32_t  _motion_dir  = 0;  // last setpoint step direction, 0 once stopped; signs the friction feedforward
+        uint32_t _still_ticks = 0;
+        uint32_t _step_gap    = 0;  // ticks between the last two steps
 
         EdgeVelocity _edge_vel;
 
         volatile bool _homing = false;
 
-        // Stall state, touched only by the control task.
+        // Stall state
         uint32_t _stall_ticks    = 0;
         bool     _stalled        = false;
         bool     _stall_positive = false;

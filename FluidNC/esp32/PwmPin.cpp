@@ -42,9 +42,9 @@ struct LedcTimer {
     uint8_t  bits;
 };
 
-static LedcTimer ledcTimers[LEDC_SPEED_MODE_MAX][LEDC_TIMER_MAX]   = {};
-static int       ledcTimersUsed[LEDC_SPEED_MODE_MAX]               = {};
-static int       ledcChannelsUsed[LEDC_SPEED_MODE_MAX]             = {};
+static LedcTimer ledcTimers[LEDC_SPEED_MODE_MAX][LEDC_TIMER_MAX] = {};
+static int       ledcTimersUsed[LEDC_SPEED_MODE_MAX]             = {};
+static int       ledcChannelsUsed[LEDC_SPEED_MODE_MAX]           = {};
 
 struct LedcAllocation {
     ledc_mode_t  mode;
@@ -68,7 +68,7 @@ static LedcAllocation allocateChannel(uint32_t frequency) {
     }
     for (int mode = 0; mode < LEDC_SPEED_MODE_MAX; ++mode) {
         if (ledcChannelsUsed[mode] < LEDC_CHANNEL_MAX && ledcTimersUsed[mode] < LEDC_TIMER_MAX) {
-            int timer                      = ledcTimersUsed[mode]++;
+            int timer                         = ledcTimersUsed[mode]++;
             ledcTimers[mode][timer].frequency = frequency;
             return { ledc_mode_t(mode), ledc_timer_t(timer), ledcChannelsUsed[mode]++, true };
         }
@@ -103,7 +103,7 @@ PwmPin::PwmPin(pinnum_t gpio, bool isActiveLow, uint32_t frequency) : _gpio(gpio
     auto        alloc     = allocateChannel(frequency);
     ledc_mode_t speedmode = alloc.mode;
     _channel              = objnum_t(int(speedmode) * LEDC_CHANNEL_MAX + alloc.channel);
-    auto&       timer     = ledcTimers[speedmode][alloc.timer];
+    auto& timer           = ledcTimers[speedmode][alloc.timer];
 
     // Reconfiguring a shared timer would restart the channels already on it.
     if (alloc.newTimer) {

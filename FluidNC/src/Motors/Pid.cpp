@@ -10,14 +10,14 @@
 
 namespace MotorDrivers {
     float Pid::update(float setpoint, float measured, float friction_ref, float dt, float limit) {
-        const float error = setpoint - measured;
+        float error = setpoint - measured;
 
         // The first sample has no previous measurement to differentiate
         // against; differentiating against zero would be a spike.
         if (_primed) {
             float d = -_kd * (measured - _prev_measured) / dt;
             if (_d_filter_hz > 0.0f) {
-                const float wdt = 2.0f * float(M_PI) * _d_filter_hz * dt;
+                float wdt = 2.0f * float(M_PI) * _d_filter_hz * dt;
                 _d_term += (d - _d_term) * wdt / (1.0f + wdt);
             } else {
                 _d_term = d;
@@ -31,9 +31,9 @@ namespace MotorDrivers {
             friction = friction_ref > 0.0f ? _kfs : -_kfs;
         }
 
-        const float base      = _kff * setpoint + friction + _kp * error + _d_term;
-        const float integral  = _integral + _ki * error * dt;
-        const float candidate = base + integral;
+        float base      = _kff * setpoint + friction + _kp * error + _d_term;
+        float integral  = _integral + _ki * error * dt;
+        float candidate = base + integral;
 
         if ((candidate > limit && error > 0.0f) || (candidate < -limit && error < 0.0f)) {
             return std::clamp(base + _integral, -limit, limit);
@@ -71,9 +71,8 @@ namespace MotorDrivers {
         // @config kff
         // @default 0
         // @tuning per-machine
-        // Feedforward gain, in percent of full drive per unit of setpoint.  For a velocity
-        // loop this is roughly 100 divided by the no-load speed at full drive, and should
-        // carry most of the output so that kp and ki only correct the remainder.
+        // Feedforward gain, in percent of full drive per unit of setpoint.  It should carry
+        // most of the output: about 100 over the no-load speed at full drive for a velocity loop.
         handler.item("kff", _kff, 0.0f, 1e6f);
 
         // @config kfs

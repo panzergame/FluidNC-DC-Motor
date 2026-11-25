@@ -2,6 +2,19 @@
 // Use of this source code is governed by a GPLv3 license that can be found in the LICENSE file.
 
 /*
+    A brushed DC motor with a quadrature encoder, run as a servo.
+
+    The planner and step segment generator already enforce acceleration and max_rate,
+    and the axis step count follows that profile whether or not a stepper is attached.
+    That count is the position setpoint, so this driver does no profiling, only tracking:
+
+        velocity command = setpoint velocity + position_kp * position error
+        drive            = velocity_pid(velocity command, measured velocity)
+
+    There is no index pulse, so homing needs limit switches, or homing_stall_error to
+    home against a hard stop: when the axis stops following the setpoint during a homing
+    approach, the motor's limit is raised in software as if a switch had fired.
+
     Example YAML
 
       dc_servo:
@@ -79,12 +92,19 @@ namespace MotorDrivers {
         if (_update_ticks == 0) {
             _update_ticks = 1;
         }
-        _dt        = float(_update_ticks) / float(configTICK_RATE_HZ);
+        _dt = float(_update_ticks) / float(configTICK_RATE_HZ);
         update_filters();
 
         config_message();
 
-        xTaskCreateAffinitySet(control_task, "dc_servo", 4096, this, control_task_priority, (1 << SUPPORT_TASK_CORE), nullptr);
+        xTaskCreateAffinitySet(control_task,              // task
+                               "dc_servo",                // name for task
+                               4096,                      // size of task stack
+                               this,                      // parameters
+                               control_task_priority,     // priority
+                               (1 << SUPPORT_TASK_CORE),  // affinity mask
+                               nullptr                    // task handle
+        );
     }
 
     void DCServo::control_task(void* arg) {
@@ -131,14 +151,12 @@ namespace MotorDrivers {
         _pid->reset();
     }
 
-    // The filtered setpoint velocity is a poor motion flag: at low feed rates
-    // it dips towards zero between steps, toggling the friction feedforward,
-    // and after a move it takes several time constants to decay.  The step
-    // spacing itself says how long a pause still belongs to the motion.
+    // The filtered setpoint velocity dips between slow steps and decays slowly after a move,
+    // so the step spacing decides how long a pause still belongs to the motion.
     void DCServo::track_motion(float setpoint_delta) {
-        const uint32_t max_gap = uint32_t(max_step_gap_s / _dt);
+        uint32_t max_gap = uint32_t(max_step_gap_s / _dt);
         if (setpoint_delta != 0.0f) {
-            const int32_t dir = setpoint_delta > 0.0f ? 1 : -1;
+            int32_t dir = setpoint_delta > 0.0f ? 1 : -1;
             // From rest the spacing is unknown until the second step.
             _step_gap    = dir == _motion_dir ? _still_ticks + 1 : max_gap;
             _motion_dir  = dir;
@@ -149,9 +167,7 @@ namespace MotorDrivers {
             return;
         }
         ++_still_ticks;
-        // Twice the last spacing rides out the jitter of steps against the
-        // control period.
-        const uint32_t hold = std::min(2 * _step_gap, max_gap);
+        uint32_t hold = std::min(2 * _step_gap, max_gap);  // twice the spacing rides out step jitter
         if (_still_ticks > hold) {
             _motion_dir = 0;
         }
@@ -185,9 +201,8 @@ namespace MotorDrivers {
             return false;
         }
 
-        // Error alone also grows while accelerating, and low velocity alone
-        // also happens between steps at slow feeds; only both together, held
-        // for a while, mean the axis is pushing against something.
+        // Error alone also grows while accelerating, and velocity drops between slow steps;
+        // only both, held for a while, mean the axis is pushing against something.
         if (std::fabs(error) > float(_homing_stall_error) && std::fabs(_measured_vel) < _homing_stall_velocity) {
             ++_stall_ticks;
         } else {
@@ -214,10 +229,8 @@ namespace MotorDrivers {
         _motor->softLimit(_stall_positive, false);
     }
 
-    // Cutting the drive lets the wound-up drive train spring back against the
-    // approach, so the motor is driven past the target by about that much
-    // first.  Releasing only outside position_deadband, measured from the
-    // real target, keeps the spring-back from re-triggering the drive.
+    // Releasing only outside position_deadband from the real target keeps the spring-back
+    // from re-triggering the drive.
     bool DCServo::rest_overshoot(float error, float& loop_error) {
         if (_parked) {
             if (std::fabs(error) <= float(_position_deadband)) {
@@ -226,8 +239,8 @@ namespace MotorDrivers {
             _parked   = false;
             _rest_dir = error > 0.0f ? 1 : -1;
         }
-        const float overshoot = float(std::min(_overshoot_counts, _position_deadband));
-        loop_error            = error + float(_rest_dir) * overshoot;
+        float overshoot = float(std::min(_overshoot_counts, _position_deadband));
+        loop_error      = error + float(_rest_dir) * overshoot;
         if (_rest_dir == 0 || loop_error * float(_rest_dir) <= 0.0f) {
             _parked = true;
         }
@@ -235,25 +248,21 @@ namespace MotorDrivers {
     }
 
     void DCServo::update() {
-        const EncoderSample sample   = _encoder->sample();
-        const int32_t       count    = _encoder_invert ? -sample.count : sample.count;
-        const float         measured = float(count);
-        const float         setpoint = float(get_axis_steps(_axis)) * _counts_per_step;
+        EncoderSample sample   = _encoder->sample();
+        int32_t       count    = _encoder_invert ? -sample.count : sample.count;
+        float         measured = float(count);
+        float         setpoint = float(get_axis_steps(_axis)) * _counts_per_step;
 
         update_filters();
 
-        // Ahead of the disabled path, so that a homing failure that also
-        // disables the motor still clears the soft limit.
+        // Before the disabled path: a homing failure also disables the motor.
         if (_stalled && !_homing) {
             release_stall();
         }
 
         if (_tripped) {
-            // Hold off until the alarm has actually been raised and then
-            // cleared; checking only for "not in alarm" would release the
-            // trip before the event has even been processed.  The trip raises
-            // a hard stop, which is Critical; a reset only passes through
-            // Alarm when there are unhomed axes, so Critical must count too.
+            // Release only once the alarm has been raised, then cleared.  The trip raises a
+            // hard stop (Critical), and a reset only passes through Alarm with unhomed axes.
             if (state_is(State::Alarm) || state_is(State::Critical)) {
                 _trip_alarmed = true;
             } else if (_trip_alarmed) {
@@ -270,17 +279,16 @@ namespace MotorDrivers {
             return;
         }
 
-        // The setpoint can only move as fast as max_rate allows, so a larger
-        // jump means the position was redefined - homing, or a reset after an
-        // alarm - rather than commanded.  Chasing it would be a lurch.
-        auto        axis     = Axes::_axis[_axis];
-        const float max_step = axis->_maxRate / 60.0f * axis->_stepsPerMm * _counts_per_step * _dt;
+        // A jump faster than max_rate allows is a redefined position (homing, reset after an
+        // alarm), not a move; chasing it would be a lurch.
+        auto  axis     = Axes::_axis[_axis];
+        float max_step = axis->_maxRate / 60.0f * axis->_stepsPerMm * _counts_per_step * _dt;
         if (std::fabs(setpoint - _last_setpoint) > 4.0f * max_step + 2.0f) {
             resync(setpoint, measured);
             return;
         }
 
-        const float setpoint_delta = setpoint - _last_setpoint;
+        float setpoint_delta = setpoint - _last_setpoint;
         _setpoint_vel += (setpoint_delta / _dt - _setpoint_vel) * _sp_alpha;
         track_motion(setpoint_delta);
         float measured_rate = (measured - _last_measured) / _dt;
@@ -295,8 +303,8 @@ namespace MotorDrivers {
         _last_setpoint = setpoint;
         _last_measured = measured;
 
-        const float error       = setpoint - (measured + _offset);
-        const bool  approaching = _homing && Machine::Homing::approach();
+        float error       = setpoint - (measured + _offset);
+        bool  approaching = _homing && Machine::Homing::approach();
         // Approaching a hard stop is meant to build up error.
         if (!(approaching && _homing_stall_error) && _max_following_error && std::fabs(error) > float(_max_following_error)) {
             log_error(name() << " " << axisName() << " following error " << error << " counts exceeds " << _max_following_error);
@@ -309,15 +317,13 @@ namespace MotorDrivers {
             return;
         }
 
-        // Stiction stops the motor from correcting the last count or two, so
-        // at rest the integral would only wind up into a stalled-motor drive
-        // that heats the motor and pushes along with the next disturbance.
-        // Idle rather than a zero setpoint velocity, because at low feed rates
-        // the setpoint sits still for many ticks between steps mid-move.
-        float       velocity_cmd = 0.0f;
-        float       drive        = 0.0f;
-        const float drive_limit  = _homing ? _homing_max_drive : Pid::max_output;
-        const bool  at_rest      = _position_deadband && state_is(State::Idle);
+        // Stiction leaves the last count or two uncorrected, so at rest the integral would only
+        // wind up into a stalled-motor drive.  Idle rather than zero setpoint velocity, because
+        // slow moves sit still for many ticks between steps.
+        float velocity_cmd = 0.0f;
+        float drive        = 0.0f;
+        float drive_limit  = _homing ? _homing_max_drive : Pid::max_output;
+        bool  at_rest      = _position_deadband && state_is(State::Idle);
         if (_motion_dir != 0) {
             _rest_dir = _motion_dir;
         }
@@ -338,11 +344,8 @@ namespace MotorDrivers {
             drive        = _pid->update(velocity_cmd, _measured_vel, float(_motion_dir), _dt, drive_limit);
         }
 
-        // The following error check misses a jam whose error stays under the
-        // threshold - at rest, near the end of a move, or with the check off -
-        // and the integral then holds a stopped motor at full drive.  Relative
-        // to the active limit so it still fires under homing_max_drive; stall
-        // homing approaches are left to stall_check.
+        // Jams under the following error threshold; relative to the active limit so it also
+        // fires under homing_max_drive.  Stall homing approaches are left to stall_check.
         if (_stall_ms && !(approaching && _homing_stall_error) && std::fabs(drive) >= drive_limit * _stall_drive / 100.0f &&
             std::fabs(_measured_vel) < _stall_velocity) {
             ++_jam_ticks;
@@ -433,8 +436,9 @@ namespace MotorDrivers {
         // @tuning typical
         // Low-pass cutoff on the measured velocity.  With edge timing (see the startup
         // log) it only has to remove noise, and the A/B edge spacing ripple left while
-        // the spacing is still being learnt after startup, so it can be high; without, the velocity is quantized to whole counts per control period and
-        // needs a cutoff well below the update rate.
+        // the spacing is still being learnt after startup, so it can be high; without,
+        // the velocity is quantized to whole counts per control period and needs a cutoff
+        // well below the update rate.
         handler.item("velocity_filter_hz", _velocity_filter_hz, 1.0f, 10000.0f);
 
         // @config setpoint_filter_hz
@@ -464,21 +468,19 @@ namespace MotorDrivers {
         // @config overshoot_counts
         // @default 0
         // @tuning per-machine
-        // With position_deadband set, the motor is driven this many encoder counts past
-        // the target, in the direction it approached from, before it coasts, so that the
-        // drive train springing back when the drive is cut leaves it on target.  It then
-        // stays coasting until the error leaves position_deadband, and is capped to it.
-        // Set it to the spring-back measured with 0.  0 disables it.
+        // With position_deadband set, the motor is driven this many encoder counts past the
+        // target, in the direction it approached from, before it coasts, so the drive train
+        // springing back leaves it on target: the spring-back seen with 0.  It then coasts
+        // until the error leaves position_deadband, and is capped to it.  0 disables it.
         handler.item("overshoot_counts", _overshoot_counts, 0, 10000);
 
         // @config stall_ms
         // @default 100
         // @tuning per-machine
         // If the drive stays at or above stall_drive while the axis moves slower than
-        // stall_velocity for this long, the motor coasts and the machine alarms.  Protects
-        // the motor and power stage from a jam the following error check misses.  Must be
-        // longer than the axis takes to accelerate past stall_velocity at full drive.
-        // 0 disables it.
+        // stall_velocity for this long, the motor coasts and the machine alarms, catching a
+        // jam the following error check misses.  Must be longer than the axis takes to
+        // accelerate past stall_velocity at full drive.  0 disables it.
         handler.item("stall_ms", _stall_ms, 0, 10000);
 
         // @config stall_drive
@@ -498,18 +500,17 @@ namespace MotorDrivers {
         // @config homing_stall_error
         // @default 0
         // @tuning per-machine
-        // Homes against a hard stop instead of a switch: during a homing approach, a
-        // following error above this many encoder counts, with the axis below
-        // homing_stall_velocity for homing_stall_ms, raises this motor's limit.  It must
-        // be above the error a normal approach builds up while accelerating.  0 disables
-        // stall homing, so the axis needs limit switches to home.
+        // Homes against a hard stop instead of a switch: during a homing approach, a following
+        // error above this many encoder counts, with the axis below homing_stall_velocity for
+        // homing_stall_ms, raises this motor's limit.  Must exceed the error a normal approach
+        // builds while accelerating.  0 disables it; the axis then needs limit switches.
         handler.item("homing_stall_error", _homing_stall_error, 0, 1000000);
 
         // @config homing_stall_velocity
         // @default 100
         // @tuning per-machine
-        // Measured speed, in encoder counts per second, below which the axis counts as
-        // stopped for stall detection.
+        // Measured speed, in encoder counts per second, below which a homing approach counts
+        // as stopped against the hard stop.
         handler.item("homing_stall_velocity", _homing_stall_velocity, 0.0f, 1e7f);
 
         // @config homing_stall_ms
@@ -548,8 +549,7 @@ namespace MotorDrivers {
 
     void DCServo::config_message() {
         log_info("    " << name() << " Encoder A:" << _encoder_a_pin.name() << " B:" << _encoder_b_pin.name() << " period:" << _update_ms
-                        << "ms" << (_encoder_invert ? " inverted" : "")
-                        << (_encoder->has_timing() ? " edge timed" : " count differenced"));
+                        << "ms" << (_encoder_invert ? " inverted" : "") << (_encoder->has_timing() ? " edge timed" : " count differenced"));
     }
 
     // Configuration registration

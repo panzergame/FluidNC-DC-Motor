@@ -40,10 +40,7 @@ namespace Machine {
         void config_motor();
         bool can_home();
         bool supports_homing_dir(bool positive);
-
-        // For drivers that sense the end of travel themselves, e.g. by stall:
-        // raises or clears this motor's limit as if a switch had changed.
-        void softLimit(bool positive, bool active);
+        void softLimit(bool positive, bool active);  // for drivers that detect end of travel themselves
         ~Motor();
     };
 }

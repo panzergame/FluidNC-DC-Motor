@@ -9,37 +9,23 @@
 
 struct EncoderSample {
     int32_t  count;
-    // Timer value at the most recent edge, in timer_hz() ticks; only
-    // meaningful when timed.  It belongs to count: no edge falls between the
-    // two.
-    uint32_t edge_time;
+    uint32_t edge_time;  // timer_hz() ticks at the edge that produced count; only if timed
     bool     timed;
 };
 
 // x4 decoding: every edge on either input counts once.
 class QuadratureEncoder {
 public:
-    // Pulses shorter than filter_ns are ignored; the hardware may round it
-    // down to what its filter can express.
-    QuadratureEncoder(pinnum_t a, pinnum_t b, uint32_t filter_ns);
+    QuadratureEncoder(pinnum_t a, pinnum_t b, uint32_t filter_ns);  // filter_ns may be rounded down
 
-    // False if the platform could not provide a counter, in which case
-    // read() always returns 0.
-    bool valid() const { return _unit >= 0; }
-
-    // True if sample() can timestamp edges.  Timing hardware is scarcer than
-    // counters, so an encoder can be valid without it.
-    bool has_timing() const { return _cap_unit_a >= 0; }
+    bool     valid() const { return _unit >= 0; }
+    bool     has_timing() const { return _cap_unit_a >= 0; }  // timing hardware is scarcer than counters
     uint32_t timer_hz() const;
 
-    // Counts since construction.  The hardware counter is narrower than the
-    // result and is unwrapped here, so this must be called often enough that
-    // the counter cannot move by more than half its range between calls.
+    // Must be called before the hardware counter can move by half its range.
     int32_t read();
 
-    // read() plus the time of the edge that produced that count.  timed is
-    // false without timing hardware, or if edges kept arriving while it tried
-    // to take a consistent snapshot.
+    // timed is false without timing hardware, or if edges kept arriving during the snapshot.
     EncoderSample sample();
 
 private:
@@ -47,9 +33,7 @@ private:
     int16_t _last_raw = 0;
     int32_t _count    = 0;
 
-    // A and B may be latched by different MCPWM groups, whose capture timers
-    // are free-running copies of each other; _b_offset maps B's timer onto
-    // A's.
+    // A and B may be latched by different MCPWM groups; _b_offset maps B's timer onto A's.
     int8_t   _cap_unit_a = -1;
     int8_t   _cap_chan_a = 0;
     int8_t   _cap_unit_b = -1;

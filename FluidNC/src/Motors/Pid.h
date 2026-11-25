@@ -7,34 +7,20 @@
 
 namespace MotorDrivers {
     /*
-        PID with a feedforward term, for closed-loop motor drivers.
-
-        The output is in percent of full drive, clamped to +/-100, so gains do
-        not depend on the PWM resolution.  dt is passed on every update, so
-        gains are per second and do not change with the loop rate.
-
-        D acts on the measurement rather than the error, so a step in the
-        setpoint does not kick the output.  Windup is prevented by conditional
-        integration: the integral holds while the output is saturated and the
-        error pushes further into saturation.
+        PID with feedforward, for closed-loop motor drivers.  The output is in percent of
+        full drive and gains are per second, so neither depends on PWM resolution or loop
+        rate.  The integral holds while the output is saturated and the error pushes further.
     */
     class Pid : public Configuration::Configurable {
     public:
         static constexpr float max_output = 100.0f;
 
-        // limit narrows the output clamp below max_output, and anti-windup
-        // follows it, so the integral does not grow against a lower ceiling.
-        //
-        // friction_ref only gives the sign of the friction feedforward.  It is
-        // separate from setpoint because a setpoint that includes an outer
-        // loop's correction jitters around zero at low speed, and every sign
-        // flip would swing the output by twice kfs.
+        // limit narrows the clamp, and anti-windup follows it.  friction_ref only signs the
+        // friction feedforward: an outer loop's correction jitters around zero at low speed,
+        // and each sign flip would swing the output by twice kfs.
         float update(float setpoint, float measured, float friction_ref, float dt, float limit = max_output);
 
-        // Clears the integral and derivative history.  Call it whenever the
-        // loop has not been driving the output, so that stale state does not
-        // jolt the motor when control resumes.
-        void reset();
+        void reset();  // call whenever the loop was not driving the output, so stale state cannot jolt it
 
         void group(Configuration::HandlerBase& handler) override;
 

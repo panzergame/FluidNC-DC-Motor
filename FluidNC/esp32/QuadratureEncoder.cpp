@@ -2,18 +2,12 @@
 // Use of this source code is governed by a GPLv3 license that can be found in the LICENSE file.
 
 /*
-  Quadrature decoding on the ESP32 PCNT peripheral.
+  Quadrature decoding on the ESP32 PCNT peripheral, through the legacy driver/pcnt.h API:
+  Arduino-ESP32 2.x is on ESP-IDF 4.4, which predates driver/pulse_cnt.h.
 
-  This uses the legacy driver/pcnt.h API because the Arduino-ESP32 2.x build
-  is on ESP-IDF 4.4, which predates driver/pulse_cnt.h.  The legacy API is
-  still present, deprecated, in ESP-IDF 5.
-
-  Edge timestamps come from MCPWM capture channels latching a capture timer
-  on every edge of A and of B.  Each MCPWM group has one capture timer shared
-  by three channels, so an encoder takes two channels of one group when it
-  can.  Otherwise it takes one spare channel from each of two groups, and the
-  constant offset between their timers is measured once at setup.  Encoders
-  beyond the channel count are counted but not timed.
+  Edge timestamps come from MCPWM capture channels.  An encoder takes two channels of one
+  group when it can, otherwise one from each of two groups, with the offset between their
+  timers measured at setup.  Encoders beyond the channel count are counted but not timed.
 */
 #include "Config.h"
 #include "Driver/QuadratureEncoder.h"
@@ -269,8 +263,8 @@ EncoderSample QuadratureEncoder::sample() {
             // timer may have wrapped past, so only a channel that changed can
             // be the newest edge; the signed compare is safe once both did,
             // since they are then both recent.
-            const bool a_moved = a != _last_cap_a;
-            const bool b_moved = b != _last_cap_b;
+            bool a_moved = a != _last_cap_a;
+            bool b_moved = b != _last_cap_b;
             if (a_moved && b_moved) {
                 _edge_time = int32_t(a - b) > 0 ? a : b;
             } else if (a_moved) {

@@ -70,16 +70,16 @@ namespace MotorDrivers {
                 return;
             }
         }
-        const uint32_t cycle = back(0).time - back(history - 1).time;
+        uint32_t cycle = back(0).time - back(history - 1).time;
         if (cycle == 0) {
             return;
         }
-        const float share = 4.0f * float(back(0).time - back(1).time) / float(cycle);
+        float share = 4.0f * float(back(0).time - back(1).time) / float(cycle);
         if (share < min_spacing || share > max_spacing) {
             return;
         }
-        const int32_t edge = std::min(edge_of(back(0).count), edge_of(back(1).count));
-        float&        s    = spacing(edge);
+        int32_t edge = std::min(edge_of(back(0).count), edge_of(back(1).count));
+        float&  s    = spacing(edge);
         s += (share - s) * spacing_alpha;
 
         float* row = _spacing[_direction > 0 ? 0 : 1];
@@ -101,8 +101,8 @@ namespace MotorDrivers {
             return 0.0f;
         }
 
-        const int32_t delta = count - _last;
-        _last               = count;
+        int32_t delta = count - _last;
+        _last         = count;
 
         if (delta == 0) {
             _idle_s += dt;
@@ -116,7 +116,7 @@ namespace MotorDrivers {
             // come yet, so the speed is at most one count over the time since
             // the last one - which may have been at the very end of its
             // period, hence one period less.
-            const float since = _idle_s - dt;
+            float since = _idle_s - dt;
             if (since > 0.0f && std::fabs(_velocity) > 1.0f / since) {
                 _velocity = std::copysign(1.0f / since, _velocity);
             }
@@ -127,7 +127,7 @@ namespace MotorDrivers {
         // A span across a reversal measures neither direction, and chatter
         // on a single edge reverses within microseconds, which would read as
         // a huge speed.  This also seeds the first span after rest.
-        const int direction = delta > 0 ? 1 : -1;
+        int direction = delta > 0 ? 1 : -1;
         if (direction != _direction) {
             _direction = direction;
             restart(count, edge_time);
@@ -137,12 +137,15 @@ namespace MotorDrivers {
         push(count, edge_time);
         learn();
 
-        const uint32_t min_window = uint32_t(dt * timer_hz);
-        const uint32_t max_window = uint32_t(max_window_s * timer_hz);
-        const Mark*    ref        = nullptr;
+        // The span reaches back just over one control period: a span of fixed counts grows to
+        // many periods at low speed, and that delay makes the velocity loop oscillate.  So short
+        // a span exposes the uneven edge spacing, hence the learnt weights in distance().
+        uint32_t    min_window = uint32_t(dt * timer_hz);
+        uint32_t    max_window = uint32_t(max_window_s * timer_hz);
+        const Mark* ref        = nullptr;
         for (int i = 1; i < _n_marks; ++i) {
-            const Mark&    m       = back(i);
-            const uint32_t elapsed = edge_time - m.time;
+            const Mark& m       = back(i);
+            uint32_t    elapsed = edge_time - m.time;
             if (ref && elapsed > max_window) {
                 break;
             }
@@ -152,7 +155,7 @@ namespace MotorDrivers {
             }
         }
 
-        const uint32_t ticks = ref ? edge_time - ref->time : 0;
+        uint32_t ticks = ref ? edge_time - ref->time : 0;
         if (ticks != 0) {
             _velocity = float(direction) * distance(ref->count, count) * timer_hz / float(ticks);
         }

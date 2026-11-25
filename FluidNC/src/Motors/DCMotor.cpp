@@ -34,7 +34,7 @@ namespace MotorDrivers {
     }
 
     void DCMotor::set(int32_t duty) {
-        const int32_t limit = int32_t(_max_duty);
+        int32_t limit = int32_t(_max_duty);
         if (duty > limit) {
             duty = limit;
         } else if (duty < -limit) {

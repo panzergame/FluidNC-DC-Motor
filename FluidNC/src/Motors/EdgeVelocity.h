@@ -3,26 +3,13 @@
 
 #pragma once
 
-#include <stdint.h>
+#include <cstdint>
 
 namespace MotorDrivers {
     /*
-        Encoder velocity from edge timestamps (synchronous M/T method).
-
-        Differencing the count once per control period quantizes velocity to
-        whole counts per period, which at low speed alternates between zero
-        and one-count spikes.  Dividing the counts between two edges by the
-        time between those same edges is exact instead: it reduces to the
-        edge period at low speed and to the mean speed over the period at
-        high speed, without switching between the two.
-
-        The span only reaches back far enough to cover one control period.
-        A span of a fixed number of counts would grow to many periods at low
-        speed, and the delay that adds is enough to make the velocity loop
-        oscillate there.  A span that short exposes the uneven spacing of the
-        quadrature edges - A and B never have exactly 50% duty and 90 degrees
-        of phase - so each of the four spacings is learnt, per direction, and
-        the counts in a span are weighted by them.
+        Encoder velocity from edge timestamps (synchronous M/T method): the counts between
+        two edges over the time between those same edges, so low speeds are not quantized
+        to whole counts per control period.
     */
     class EdgeVelocity {
     public:
@@ -66,8 +53,8 @@ namespace MotorDrivers {
         float   _velocity  = 0.0f;
         bool    _primed    = false;
 
-        // Distance from each edge to the next, in counts, indexed by
-        // direction and by edge index mod 4; each row sums to 4.
+        // Distance from each edge to the next, in counts, indexed by direction and by edge
+        // index mod 4; each row sums to 4.  A and B never have exactly 50% duty and 90 degrees.
         float _spacing[2][4] = { { 1.0f, 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f } };
     };
 }
