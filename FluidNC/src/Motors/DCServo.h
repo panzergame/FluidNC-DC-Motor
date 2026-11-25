@@ -74,6 +74,10 @@ namespace MotorDrivers {
         void update_filters();
         void track_motion(float setpoint_delta);
 
+        // At rest with overshoot_counts set: returns true while the motor
+        // should coast, otherwise sets the error the loop should act on.
+        bool rest_overshoot(float error, float& loop_error);
+
         // Coasts the motor and alarms the machine; the caller logs why.
         void trip();
 
@@ -98,6 +102,7 @@ namespace MotorDrivers {
         float    _setpoint_filter_hz  = 50.0f;
         uint32_t _max_following_error = 0;
         uint32_t _position_deadband   = 0;
+        uint32_t _overshoot_counts    = 0;
         uint32_t _report_ms           = 0;
         uint32_t _stall_ms            = 100;
         float    _stall_drive         = 90.0f;
@@ -132,6 +137,11 @@ namespace MotorDrivers {
         uint32_t _report_ticks  = 0;
         float    _last_drive    = 0.0f;
         uint32_t _jam_ticks     = 0;
+
+        // Direction of the last approach to the target, and whether the
+        // motor has reached the overshoot point and coasts since.
+        int32_t  _rest_dir      = 0;
+        bool     _parked        = false;
 
         // Direction the setpoint last stepped in, held across the gaps
         // between steps; 0 once the trajectory has stopped.  Gives the

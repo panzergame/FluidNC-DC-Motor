@@ -123,6 +123,8 @@ namespace MotorDrivers {
         _setpoint_vel  = 0.0f;
         _measured_vel  = 0.0f;
         _jam_ticks     = 0;
+        _rest_dir      = 0;
+        _parked        = false;
         _motion_dir    = 0;
         _still_ticks   = 0;
         _edge_vel.reset();
@@ -212,6 +214,26 @@ namespace MotorDrivers {
         _motor->softLimit(_stall_positive, false);
     }
 
+    // Cutting the drive lets the wound-up drive train spring back against the
+    // approach, so the motor is driven past the target by about that much
+    // first.  Releasing only outside position_deadband, measured from the
+    // real target, keeps the spring-back from re-triggering the drive.
+    bool DCServo::rest_overshoot(float error, float& loop_error) {
+        if (_parked) {
+            if (std::fabs(error) <= float(_position_deadband)) {
+                return true;
+            }
+            _parked   = false;
+            _rest_dir = error > 0.0f ? 1 : -1;
+        }
+        const float overshoot = float(std::min(_overshoot_counts, _position_deadband));
+        loop_error            = error + float(_rest_dir) * overshoot;
+        if (_rest_dir == 0 || loop_error * float(_rest_dir) <= 0.0f) {
+            _parked = true;
+        }
+        return _parked;
+    }
+
     void DCServo::update() {
         const EncoderSample sample   = _encoder->sample();
         const int32_t       count    = _encoder_invert ? -sample.count : sample.count;
@@ -295,10 +317,24 @@ namespace MotorDrivers {
         float       velocity_cmd = 0.0f;
         float       drive        = 0.0f;
         const float drive_limit  = _homing ? _homing_max_drive : Pid::max_output;
-        if (_position_deadband && state_is(State::Idle) && std::fabs(error) <= float(_position_deadband)) {
+        const bool  at_rest      = _position_deadband && state_is(State::Idle);
+        if (_motion_dir != 0) {
+            _rest_dir = _motion_dir;
+        }
+        if (!at_rest) {
+            _parked = false;
+        }
+        float loop_error = error;
+        bool  coast;
+        if (at_rest && _overshoot_counts) {
+            coast = rest_overshoot(error, loop_error);
+        } else {
+            coast = at_rest && std::fabs(error) <= float(_position_deadband);
+        }
+        if (coast) {
             _pid->reset();
         } else {
-            velocity_cmd = _setpoint_vel + _position_kp * error;
+            velocity_cmd = _setpoint_vel + _position_kp * loop_error;
             drive        = _pid->update(velocity_cmd, _measured_vel, float(_motion_dir), _dt, drive_limit);
         }
 
@@ -424,6 +460,16 @@ namespace MotorDrivers {
         // error stiction leaves at rest, so the loop does not hold drive on a stalled motor.
         // 0 disables it.
         handler.item("position_deadband", _position_deadband, 0, 10000);
+
+        // @config overshoot_counts
+        // @default 0
+        // @tuning per-machine
+        // With position_deadband set, the motor is driven this many encoder counts past
+        // the target, in the direction it approached from, before it coasts, so that the
+        // drive train springing back when the drive is cut leaves it on target.  It then
+        // stays coasting until the error leaves position_deadband, and is capped to it.
+        // Set it to the spring-back measured with 0.  0 disables it.
+        handler.item("overshoot_counts", _overshoot_counts, 0, 10000);
 
         // @config stall_ms
         // @default 100
