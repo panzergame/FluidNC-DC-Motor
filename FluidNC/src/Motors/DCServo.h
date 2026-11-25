@@ -102,7 +102,6 @@ namespace MotorDrivers {
         bool     _trip_alarmed  = false;
         float    _report_max    = 0.0f;
         uint32_t _report_ticks  = 0;
-        float    _last_drive    = 0.0f;
         uint32_t _jam_ticks     = 0;
 
         int32_t _rest_dir = 0;      // direction of the last approach to the target

@@ -187,7 +187,6 @@ namespace MotorDrivers {
                 // the planner; tracking it would only push into the stop.
                 resync(setpoint, measured);
                 _dc->set(0);
-                _last_drive = 0.0f;
                 return true;
             }
             if (std::fabs(measured - _stall_pos) > float(_homing_release_counts)) {
@@ -219,7 +218,6 @@ namespace MotorDrivers {
         log_debug(name() << " " << axisName() << " stalled at " << (measured + _offset) << " error " << error);
         resync(setpoint, measured);
         _dc->set(0);
-        _last_drive = 0.0f;
         _motor->softLimit(_stall_positive, true);
         return true;
     }
@@ -271,10 +269,7 @@ namespace MotorDrivers {
         }
 
         if (_disabled || _tripped) {
-            if (_last_drive != 0.0f) {
-                _dc->coast();
-                _last_drive = 0.0f;
-            }
+            _dc->coast();  // not set(0): that brakes with slow_decay
             resync(setpoint, measured);
             return;
         }
@@ -309,7 +304,6 @@ namespace MotorDrivers {
         if (!(approaching && _homing_stall_error) && _max_following_error && std::fabs(error) > float(_max_following_error)) {
             log_error(name() << " " << axisName() << " following error " << error << " counts exceeds " << _max_following_error);
             trip();
-            _last_drive = 0.0f;
             return;
         }
 
@@ -353,14 +347,12 @@ namespace MotorDrivers {
                 log_error(name() << " " << axisName() << " stalled at " << drive << "% drive for " << _stall_ms << "ms, error " << error
                                  << " counts");
                 trip();
-                _last_drive = 0.0f;
                 return;
             }
         } else {
             _jam_ticks = 0;
         }
         _dc->set(int32_t(drive * float(_dc->maxDuty()) / 100.0f));
-        _last_drive = drive;
 
         if (_report_ms) {
             if (std::fabs(error) > _report_max) {
@@ -460,7 +452,8 @@ namespace MotorDrivers {
         // @default 0
         // @tuning per-machine
         // While the machine is idle and the position error is within this many encoder
-        // counts, the motor coasts and the velocity PID is reset.  Set it just above the
+        // counts, the drive drops to zero (a brake with slow_decay) and the velocity PID
+        // is reset.  Set it just above the
         // error stiction leaves at rest, so the loop does not hold drive on a stalled motor.
         // 0 disables it.
         handler.item("position_deadband", _position_deadband, 0, 10000);
