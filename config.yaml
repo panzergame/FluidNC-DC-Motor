@@ -24,18 +24,20 @@ axes:
       feed_scaler: 3
     motor0:
       dc_servo:
-        encoder_a_pin: gpio.34
-        encoder_b_pin: gpio.35
-        counts_per_step: 0.1
+        encoder:
+          a_pin: gpio.34
+          b_pin: gpio.35
+          counts_per_step: 0.1
         position_kp: 40
         velocity_filter_hz: 200
         max_following_error: 200
         # Spring-back ~6 counts.
         position_deadband: 8
         overshoot_counts: 4
-        homing_stall_error: 30
-        homing_stall_ms: 100
-        homing_max_drive: 40
+        homing:
+          stall_error: 30
+          stall_ms: 100
+          max_drive: 40
         dc_motor:
           in1_pin: gpio.32
           in2_pin: gpio.33
@@ -61,9 +63,10 @@ axes:
     motor0:
       limit_neg_pin: gpio.13
       dc_servo:
-        encoder_a_pin: gpio.36
-        encoder_b_pin: gpio.39
-        counts_per_step: 0.1
+        encoder:
+          a_pin: gpio.36
+          b_pin: gpio.39
+          counts_per_step: 0.1
         position_kp: 80
         velocity_filter_hz: 400
         max_following_error: 200
@@ -95,17 +98,19 @@ axes:
       feed_scaler: 3
     motor0:
       dc_servo:
-        encoder_a_pin: gpio.18
-        encoder_b_pin: gpio.19
-        encoder_invert: true
-        counts_per_step: 0.1
+        encoder:
+          a_pin: gpio.18
+          b_pin: gpio.19
+          invert: true
+          counts_per_step: 0.1
         position_kp: 40
         velocity_filter_hz: 200
         max_following_error: 200
         position_deadband: 15
-        homing_stall_error: 30
-        homing_stall_ms: 100
-        homing_max_drive: 40
+        homing:
+          stall_error: 30
+          stall_ms: 100
+          max_drive: 40
         dc_motor:
           in1_pin: gpio.27
           in2_pin: gpio.4

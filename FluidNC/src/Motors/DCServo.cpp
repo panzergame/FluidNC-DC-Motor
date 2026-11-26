@@ -11,22 +11,24 @@
         velocity command = setpoint velocity + position_kp * position error
         drive            = velocity_pid(velocity command, measured velocity)
 
-    There is no index pulse, so homing needs limit switches, or homing_stall_error to
+    There is no index pulse, so homing needs limit switches, or homing/stall_error to
     home against a hard stop: when the axis stops following the setpoint during a homing
     approach, the motor's limit is raised in software as if a switch had fired.
 
     Example YAML
 
       dc_servo:
-        encoder_a_pin: gpio.34
-        encoder_b_pin: gpio.35
-        counts_per_step: 1
         position_kp: 20
         max_following_error: 200
-        homing_stall_error: 100
-        homing_stall_velocity: 50
-        homing_stall_ms: 50
-        homing_max_drive: 30
+        encoder:
+          a_pin: gpio.34
+          b_pin: gpio.35
+          counts_per_step: 1
+        homing:
+          stall_error: 100
+          stall_velocity: 50
+          stall_ms: 50
+          max_drive: 30
         dc_motor:
           in1_pin: gpio.32
           in2_pin: gpio.33
@@ -39,7 +41,6 @@
 
 #include "DCServo.h"
 
-#include "Driver/QuadratureEncoder.h"
 #include "Machine/Homing.h"
 #include "Machine/MachineConfig.h"
 #include "Machine/Motor.h"
@@ -77,12 +78,7 @@ namespace MotorDrivers {
 
         _dc->init();
 
-        _encoder_a_pin.setAttr(Pin::Attr::Input);
-        _encoder_b_pin.setAttr(Pin::Attr::Input);
-        _encoder = new QuadratureEncoder(_encoder_a_pin.getNative(Pin::Capabilities::Input | Pin::Capabilities::Native),
-                                         _encoder_b_pin.getNative(Pin::Capabilities::Input | Pin::Capabilities::Native),
-                                         _encoder_filter_ns);
-        if (!_encoder->valid()) {
+        if (!_encoder->init()) {
             log_config_error("    " << name() << " disabled: no encoder");
             return;
         }
@@ -120,7 +116,7 @@ namespace MotorDrivers {
     }
 
     bool DCServo::set_homing_mode(bool isHoming) {
-        _homing = isHoming;
+        _homing_mode = isHoming;
         return true;
     }
 
@@ -188,25 +184,25 @@ namespace MotorDrivers {
                 _dc->set(0);
                 return true;
             }
-            if (std::fabs(measured - _stall_pos) > float(_homing_release_counts)) {
+            if (std::fabs(measured - _stall_pos) > float(_homing->_release_counts)) {
                 release_stall();
             }
             return false;
         }
 
-        if (!approaching || !_homing_stall_error) {
+        if (!approaching || !can_self_home()) {
             _stall_ticks = 0;
             return false;
         }
 
         // Error alone also grows while accelerating, and velocity drops between slow steps;
         // only both, held for a while, mean the axis is pushing against something.
-        if (std::fabs(error) > float(_homing_stall_error) && std::fabs(_measured_vel) < _homing_stall_velocity) {
+        if (std::fabs(error) > float(_homing->_stall_error) && std::fabs(_measured_vel) < _homing->_stall_velocity) {
             ++_stall_ticks;
         } else {
             _stall_ticks = 0;
         }
-        if (float(_stall_ticks) * _dt * 1000.0f < float(_homing_stall_ms)) {
+        if (float(_stall_ticks) * _dt * 1000.0f < float(_homing->_stall_ms)) {
             return false;
         }
 
@@ -246,14 +242,13 @@ namespace MotorDrivers {
 
     void DCServo::update() {
         EncoderSample sample   = _encoder->sample();
-        int32_t       count    = _encoder_invert ? -sample.count : sample.count;
-        float         measured = float(count);
-        float         setpoint = float(get_axis_steps(_axis)) * _counts_per_step;
+        float         measured = float(sample.count);
+        float         setpoint = float(get_axis_steps(_axis)) * _encoder->counts_per_step();
 
         update_filters();
 
         // Before the disabled path: a homing failure also disables the motor.
-        if (_stalled && !_homing) {
+        if (_stalled && !_homing_mode) {
             release_stall();
         }
 
@@ -276,7 +271,7 @@ namespace MotorDrivers {
         // A jump faster than max_rate allows is a redefined position (homing, reset after an
         // alarm), not a move; chasing it would be a lurch.
         auto  axis           = Axes::_axis[_axis];
-        float max_step       = axis->_maxRate / 60.0f * axis->_stepsPerMm * _counts_per_step * _dt;
+        float max_step       = axis->_maxRate / 60.0f * axis->_stepsPerMm * _encoder->counts_per_step() * _dt;
         float setpoint_delta = setpoint - _last_setpoint;
         if (std::fabs(setpoint_delta) > 4.0f * max_step + 2.0f) {
             resync(setpoint, measured);
@@ -287,7 +282,7 @@ namespace MotorDrivers {
         track_motion(setpoint_delta);
         float measured_rate = (measured - _last_measured) / _dt;
         if (sample.timed) {
-            measured_rate = _edge_vel.update(count, sample.edge_time, _dt, float(_encoder->timer_hz()));
+            measured_rate = _edge_vel.update(sample.count, sample.edge_time, _dt, float(_encoder->timer_hz()));
         } else if (_encoder->has_timing()) {
             // Edges kept the snapshot from settling; a span across the untimed
             // count would be misread, so only the speed carries over.
@@ -298,8 +293,8 @@ namespace MotorDrivers {
         _last_measured = measured;
 
         float error        = setpoint - (measured + _offset);
-        bool  approaching  = _homing && Machine::Homing::approach();
-        bool  stall_homing = approaching && _homing_stall_error;  // left to stall_check()
+        bool  approaching  = _homing_mode && Machine::Homing::approach();
+        bool  stall_homing = approaching && can_self_home();  // left to stall_check()
         // Approaching a hard stop is meant to build up error.
         if (!stall_homing && _max_following_error && std::fabs(error) > float(_max_following_error)) {
             log_error(name() << " " << axisName() << " following error " << error << " counts exceeds " << _max_following_error);
@@ -316,7 +311,7 @@ namespace MotorDrivers {
         // slow moves sit still for many ticks between steps.
         float velocity_cmd = 0.0f;
         float drive        = 0.0f;
-        float drive_limit  = _homing ? _homing_max_drive : Pid::max_output;
+        float drive_limit  = _homing_mode && _homing ? _homing->_max_drive : Pid::max_output;
         bool  at_rest      = _position_deadband && state_is(State::Idle);
         float loop_error   = error;
         bool  coast        = false;
@@ -339,7 +334,7 @@ namespace MotorDrivers {
         }
 
         // Jams under the following error threshold; relative to the active limit so it also
-        // fires under homing_max_drive.  Stall homing approaches are left to stall_check.
+        // fires under homing/max_drive.  Stall homing approaches are left to stall_check.
         if (_stall_ms && !stall_homing && std::fabs(drive) >= drive_limit * _stall_drive / 100.0f &&
             std::fabs(_measured_vel) < _stall_velocity) {
             ++_jam_ticks;
@@ -371,47 +366,13 @@ namespace MotorDrivers {
     void DCServo::validate() {
         Assert(_dc != nullptr, "dc_motor section is required");
         Assert(_pid != nullptr, "velocity_pid section is required");
-        Assert(!_encoder_a_pin.undefined(), "encoder_a_pin should be configured.");
-        Assert(!_encoder_b_pin.undefined(), "encoder_b_pin should be configured.");
-        Assert(_encoder_a_pin.index() != _encoder_b_pin.index(), "encoder_a_pin and encoder_b_pin must be different pins");
+        Assert(_encoder != nullptr, "encoder section is required");
         if (_overshoot_counts && !_position_deadband) {
             log_warn(name() << " overshoot_counts has no effect without position_deadband");
         }
     }
 
     void DCServo::group(Configuration::HandlerBase& handler) {
-        // @config encoder_a_pin
-        // @default NO_PIN
-        // @pin_attributes input
-        // Encoder channel A.  Must be a native GPIO, since it feeds the pulse counter.
-        handler.item("encoder_a_pin", _encoder_a_pin);
-
-        // @config encoder_b_pin
-        // @default NO_PIN
-        // @pin_attributes input
-        // Encoder channel B.  Must be a native GPIO, since it feeds the pulse counter.
-        handler.item("encoder_b_pin", _encoder_b_pin);
-
-        // @config encoder_filter_ns
-        // @default 1000
-        // @tuning typical
-        // Encoder pulses shorter than this are treated as noise.  The ESP32 caps it at
-        // about 12.7us.  0 disables the filter.
-        handler.item("encoder_filter_ns", _encoder_filter_ns, 0, 100000);
-
-        // @config encoder_invert
-        // @default false
-        // Reverses the encoder count direction.  It must agree with the motor direction:
-        // if the axis runs away at full drive as soon as it is enabled, flip this.
-        handler.item("encoder_invert", _encoder_invert);
-
-        // @config counts_per_step
-        // @default 1
-        // @tuning per-machine
-        // Encoder counts (after x4 decoding) per axis step.  Leave at 1 and set the
-        // axis steps_per_mm in encoder counts unless the two need to differ.
-        handler.item("counts_per_step", _counts_per_step, 0.001f, 1000.0f);
-
         // @config update_ms
         // @default 1
         // @tuning typical
@@ -484,7 +445,7 @@ namespace MotorDrivers {
         // @config stall_drive
         // @default 90
         // @tuning per-machine
-        // Drive, in percent of the current drive limit (homing_max_drive while homing),
+        // Drive, in percent of the current drive limit (homing/max_drive while homing),
         // at or above which the motor counts as pushing for stall detection.
         handler.item("stall_drive", _stall_drive, 1.0f, 100.0f);
 
@@ -495,50 +456,14 @@ namespace MotorDrivers {
         // stopped for stall detection.
         handler.item("stall_velocity", _stall_velocity, 0.0f, 1e7f);
 
-        // @config homing_stall_error
-        // @default 0
-        // @tuning per-machine
-        // Homes against a hard stop instead of a switch: during a homing approach, a following
-        // error above this many encoder counts, with the axis below homing_stall_velocity for
-        // homing_stall_ms, raises this motor's limit.  Must exceed the error a normal approach
-        // builds while accelerating.  0 disables it; the axis then needs limit switches.
-        handler.item("homing_stall_error", _homing_stall_error, 0, 1000000);
-
-        // @config homing_stall_velocity
-        // @default 100
-        // @tuning per-machine
-        // Measured speed, in encoder counts per second, below which a homing approach counts
-        // as stopped against the hard stop.
-        handler.item("homing_stall_velocity", _homing_stall_velocity, 0.0f, 1e7f);
-
-        // @config homing_stall_ms
-        // @default 50
-        // @tuning per-machine
-        // How long the stall condition has to hold before the limit is raised.
-        handler.item("homing_stall_ms", _homing_stall_ms, 1, 10000);
-
-        // @config homing_release_counts
-        // @default 10
-        // @tuning per-machine
-        // After a stall, the soft limit clears once the axis has backed this many encoder
-        // counts off the stop.  Must be less than the motor's pulloff_mm in counts, or
-        // homing fails with the limit still engaged.
-        handler.item("homing_release_counts", _homing_release_counts, 1, 1000000);
-
-        // @config homing_max_drive
-        // @default 100
-        // @tuning per-machine
-        // Caps the drive, in percent, for the whole homing cycle, which bounds the force
-        // the axis pushes into a hard stop with.  Leave enough to overcome friction at
-        // the homing feed rate.
-        handler.item("homing_max_drive", _homing_max_drive, 1.0f, 100.0f);
-
         // @config report_ms
         // @default 0
         // Interval for logging setpoint, position, peak following error and drive while
         // tuning.  0 disables it.
         handler.item("report_ms", _report_ms, 0, 60000);
 
+        handler.section("encoder", _encoder);
+        handler.section("homing", _homing);
         handler.section("dc_motor", _dc);
         handler.section("velocity_pid", _pid);
 
@@ -546,8 +471,8 @@ namespace MotorDrivers {
     }
 
     void DCServo::config_message() {
-        log_info("    " << name() << " Encoder A:" << _encoder_a_pin.name() << " B:" << _encoder_b_pin.name() << " period:" << _update_ms
-                        << "ms" << (_encoder_invert ? " inverted" : "") << (_encoder->has_timing() ? " edge timed" : " count differenced"));
+        log_info("    " << name() << " Encoder A:" << _encoder->a_pin().name() << " B:" << _encoder->b_pin().name() << " period:" << _update_ms
+                        << "ms" << (_encoder->inverted() ? " inverted" : "") << (_encoder->has_timing() ? " edge timed" : " count differenced"));
     }
 
     // Configuration registration

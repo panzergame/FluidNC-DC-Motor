@@ -6,13 +6,12 @@
 #include "Servo.h"
 #include "DCMotor.h"
 #include "EdgeVelocity.h"
+#include "Encoder.h"
 #include "Pid.h"
-#include "Pin.h"
+#include "ServoHoming.h"
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-
-class QuadratureEncoder;
 
 namespace Machine {
     class Motor;
@@ -31,7 +30,7 @@ namespace MotorDrivers {
         // Overrides for inherited methods
         void init() override;
         bool set_homing_mode(bool isHoming) override;  // protocol task: only flags the mode
-        bool can_self_home() override { return _homing_stall_error != 0; }
+        bool can_self_home() override { return _homing && _homing->_stall_error != 0; }
         void set_disable(bool disable) override;  // ISR context: only flags it, the control task coasts
         void update() override;
 
@@ -55,15 +54,11 @@ namespace MotorDrivers {
         bool stall_check(float setpoint, float measured, float error, bool approaching);
         void release_stall();
 
-        DCMotor* _dc  = nullptr;
-        Pid*     _pid = nullptr;
+        DCMotor*     _dc      = nullptr;
+        Pid*         _pid     = nullptr;
+        Encoder*     _encoder = nullptr;
+        ServoHoming* _homing  = nullptr;  // optional: without it, no stall homing and no drive cap
 
-        Pin      _encoder_a_pin;
-        Pin      _encoder_b_pin;
-        uint32_t _encoder_filter_ns = 1000;
-        bool     _encoder_invert    = false;
-
-        float    _counts_per_step     = 1.0f;
         uint32_t _update_ms           = 1;
         float    _position_kp         = 0.0f;
         float    _velocity_filter_hz  = 100.0f;
@@ -76,20 +71,13 @@ namespace MotorDrivers {
         float    _stall_drive         = 90.0f;
         float    _stall_velocity      = 100.0f;
 
-        uint32_t _homing_stall_error    = 0;
-        float    _homing_stall_velocity = 100.0f;
-        uint32_t _homing_stall_ms       = 50;
-        uint32_t _homing_release_counts = 10;
-        float    _homing_max_drive      = 100.0f;
-
-        QuadratureEncoder* _encoder      = nullptr;
-        Machine::Motor*    _motor        = nullptr;
-        TickType_t         _update_ticks = 1;
-        float              _dt           = 0.001f;
-        float              _vel_alpha    = 1.0f;
-        float              _sp_alpha     = 1.0f;
-        float              _vel_alpha_hz = -1.0f;  // cutoffs the alphas match, so $ changes take effect
-        float              _sp_alpha_hz  = -1.0f;
+        Machine::Motor* _motor        = nullptr;
+        TickType_t      _update_ticks = 1;
+        float           _dt           = 0.001f;
+        float           _vel_alpha    = 1.0f;
+        float           _sp_alpha     = 1.0f;
+        float           _vel_alpha_hz = -1.0f;  // cutoffs the alphas match, so $ changes take effect
+        float           _sp_alpha_hz  = -1.0f;
 
         // Control and stall state, touched only by the control task.
         float    _offset        = 0.0f;  // encoder counts -> setpoint counts
@@ -112,7 +100,7 @@ namespace MotorDrivers {
 
         EdgeVelocity _edge_vel;
 
-        volatile bool _homing = false;
+        volatile bool _homing_mode = false;
 
         // Stall state
         uint32_t _stall_ticks    = 0;

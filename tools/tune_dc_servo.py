@@ -419,7 +419,7 @@ class Tuner:
         self.max_rate = b.get(f"axes/{self.args.axis}/max_rate_mm_per_min")
         self.accel = b.get(f"axes/{self.args.axis}/acceleration_mm_per_sec2")
         self.steps_per_mm = b.get(f"axes/{self.args.axis}/steps_per_mm")
-        self.counts_per_step = b.get(f"{self.base}/counts_per_step")
+        self.counts_per_step = b.get(f"{self.base}/encoder/counts_per_step")
         self.max_following_error = b.get(f"{self.base}/max_following_error") or float("inf")
         self.original = self.read_all()
         self.good = {k: v for k, v in self.original.items() if k in self.params}
