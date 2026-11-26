@@ -6,35 +6,17 @@
 #include "Configuration/HandlerBase.h"
 
 #include <algorithm>  // std::clamp
-#include <cmath>      // M_PI
 
 namespace MotorDrivers {
-    // The first sample has no previous measurement to differentiate
-    // against; differentiating against zero would be a spike.
-    void Pid::update_derivative(float measured, float dt) {
-        if (_primed) {
-            float d = -_kd * (measured - _prev_measured) / dt;
-            if (_d_filter_hz > 0.0f) {
-                float wdt = 2.0f * float(M_PI) * _d_filter_hz * dt;
-                _d_term += (d - _d_term) * wdt / (1.0f + wdt);
-            } else {
-                _d_term = d;
-            }
-        }
-        _prev_measured = measured;
-        _primed        = true;
-    }
-
     float Pid::update(float setpoint, float measured, float friction_ref, float dt, float limit) {
         float error = setpoint - measured;
-        update_derivative(measured, dt);
 
         float friction = 0.0f;
         if (friction_ref != 0.0f) {
             friction = friction_ref > 0.0f ? _kfs : -_kfs;
         }
 
-        float base      = _kff * setpoint + friction + _kp * error + _d_term;
+        float base      = _kff * setpoint + friction + _kp * error;
         float integral  = _integral + _ki * error * dt;
         float candidate = base + integral;
 
@@ -47,8 +29,6 @@ namespace MotorDrivers {
 
     void Pid::reset() {
         _integral = 0.0f;
-        _d_term   = 0.0f;
-        _primed   = false;
     }
 
     void Pid::group(Configuration::HandlerBase& handler) {
@@ -64,13 +44,6 @@ namespace MotorDrivers {
         // Integral gain, in percent of full drive per unit of error per second.
         handler.item("ki", _ki, 0.0f, 1e6f);
 
-        // @config kd
-        // @default 0
-        // @tuning per-machine
-        // Derivative gain, in percent of full drive per unit of measurement change per second.
-        // Acts on the measurement only, so setpoint steps do not kick the output.
-        handler.item("kd", _kd, 0.0f, 1e6f);
-
         // @config kff
         // @default 0
         // @tuning per-machine
@@ -85,11 +58,5 @@ namespace MotorDrivers {
         // planned motion.  Set it to the drive the motor needs to keep moving at low
         // speed, so the integral does not have to build that up at the start of every move.
         handler.item("kfs", _kfs, 0.0f, 100.0f);
-
-        // @config d_filter_hz
-        // @default 0
-        // @tuning typical
-        // Cutoff of a first-order low-pass on the derivative term.  0 disables the filter.
-        handler.item("d_filter_hz", _d_filter_hz, 0.0f, 1e5f);
     }
 }

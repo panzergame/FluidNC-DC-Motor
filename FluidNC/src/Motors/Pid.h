@@ -7,7 +7,7 @@
 
 namespace MotorDrivers {
     /*
-        PID with feedforward, for closed-loop motor drivers.  The output is in percent of
+        PI with feedforward, for closed-loop motor drivers.  The output is in percent of
         full drive and gains are per second, so neither depends on PWM resolution or loop
         rate.  The integral holds while the output is saturated and the error pushes further.
     */
@@ -25,18 +25,11 @@ namespace MotorDrivers {
         void group(Configuration::HandlerBase& handler) override;
 
     private:
-        void update_derivative(float measured, float dt);
+        float _kp  = 0.0f;
+        float _ki  = 0.0f;
+        float _kff = 0.0f;
+        float _kfs = 0.0f;
 
-        float _kp          = 0.0f;
-        float _ki          = 0.0f;
-        float _kd          = 0.0f;
-        float _kff         = 0.0f;
-        float _kfs         = 0.0f;
-        float _d_filter_hz = 0.0f;
-
-        float _integral      = 0.0f;
-        float _d_term        = 0.0f;
-        float _prev_measured = 0.0f;
-        bool  _primed        = false;
+        float _integral = 0.0f;
     };
 }

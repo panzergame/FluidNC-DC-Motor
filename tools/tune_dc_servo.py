@@ -185,7 +185,6 @@ class Tuner:
         "kfs": "velocity_pid/kfs",
         "kp": "velocity_pid/kp",
         "ki": "velocity_pid/ki",
-        "kd": "velocity_pid/kd",
         "position_kp": "position_kp",
         "velocity_filter_hz": "velocity_filter_hz",
         "setpoint_filter_hz": "setpoint_filter_hz",
@@ -519,7 +518,7 @@ def yaml_snippet(axis, g):
         f"        position_deadband: {g['position_deadband']:.0f}\n"
         f"        overshoot_counts: {g['overshoot_counts']:.0f}\n"
         f"        velocity_pid:\n"
-        f"          kp: {g['kp']:.4g}\n          ki: {g['ki']:.4g}\n          kd: {g['kd']:.4g}\n"
+        f"          kp: {g['kp']:.4g}\n          ki: {g['ki']:.4g}\n"
         f"          kff: {g['kff']:.4g}\n          kfs: {g['kfs']:.4g}\n"
     )
 
