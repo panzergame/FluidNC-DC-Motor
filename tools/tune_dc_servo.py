@@ -55,6 +55,11 @@ class Tripped(Exception):
     pass
 
 
+def fixed(value):
+    # The $ parser is the G-code one, which stops at an exponent: 5e-06 would set 5.
+    return f"{value:.10f}".rstrip("0").rstrip(".") or "0"
+
+
 def log(msg):
     sys.stderr.write(msg + "\n")
     sys.stderr.flush()
@@ -143,8 +148,9 @@ class Board:
         return float(self.values[key])
 
     def set(self, path, value):
-        if not self.command(f"$/{path}={value:.6g}"):
-            raise TuneError(f"cannot set {path}={value}")
+        text = fixed(value)
+        if not self.command(f"$/{path}={text}"):
+            raise TuneError(f"cannot set {path}={text}")
 
     def reset_alarm(self):
         self.ser.write(CTRL_X)
