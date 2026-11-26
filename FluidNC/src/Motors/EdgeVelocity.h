@@ -13,7 +13,6 @@ namespace MotorDrivers {
     */
     class EdgeVelocity {
     public:
-        // Forgets the motion, not the learnt edge spacing.
         void reset() { _primed = false; }
         // After a count that could not be timed: the marks no longer form one run of
         // edges, but the speed and direction hold until the next span.
@@ -35,23 +34,12 @@ namespace MotorDrivers {
         // i edges' worth of marks back from the newest.
         const Mark& back(int i) const { return _marks[(_head + history - i) % history]; }
 
-        // Edge spacing
-
-        // Edge index of the edge that produced a count, in the direction of
-        // travel: counting up, count c was reached by the edge between c-1
-        // and c; counting down, by the edge between c and c+1.
-        int32_t edge_of(int32_t count) const { return _direction > 0 ? count : count + 1; }
-        float&  spacing(int32_t edge);
-        // Distance between the edges that produced two counts, in counts,
-        // corrected for the uneven edge spacing.
-        float distance(int32_t from, int32_t to);
-        void  learn();
-
         // Velocity
         float       idle(float dt);
         const Mark* span_start(uint32_t edge_time, float dt, float timer_hz) const;
 
-        // A full quadrature cycle of single-count marks, plus the newest.
+        // Enough marks for a span to reach one control period back when the
+        // newest edges fell close together.
         static constexpr int history = 5;
 
         Mark    _marks[history];
@@ -62,9 +50,5 @@ namespace MotorDrivers {
         float   _idle_s    = 0.0f;
         float   _velocity  = 0.0f;
         bool    _primed    = false;
-
-        // Distance from each edge to the next, in counts, indexed by direction and by edge
-        // index mod 4; each row sums to 4.  A and B never have exactly 50% duty and 90 degrees.
-        float _spacing[2][4] = { { 1.0f, 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f } };
     };
 }

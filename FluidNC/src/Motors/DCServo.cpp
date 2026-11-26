@@ -434,8 +434,8 @@ namespace MotorDrivers {
         // @default 100
         // @tuning typical
         // Low-pass cutoff on the measured velocity.  With edge timing (see the startup
-        // log) it only has to remove noise, and the A/B edge spacing ripple left while
-        // the spacing is still being learnt after startup, so it can be high; without,
+        // log) it only has to remove noise and the ripple of the uneven A/B edge spacing,
+        // so it can be high; without,
         // the velocity is quantized to whole counts per control period and needs a cutoff
         // well below the update rate.
         handler.item("velocity_filter_hz", _velocity_filter_hz, 1.0f, 10000.0f);
