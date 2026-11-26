@@ -18,7 +18,7 @@ namespace MotorDrivers {
         // limit narrows the clamp, and anti-windup follows it.  friction_ref only signs the
         // friction feedforward: an outer loop's correction jitters around zero at low speed,
         // and each sign flip would swing the output by twice kfs.
-        float update(float setpoint, float measured, float friction_ref, float dt, float limit = max_output);
+        float update(float setpoint, float measured, float friction_ref, float dt, float limit);
 
         void reset();  // call whenever the loop was not driving the output, so stale state cannot jolt it
 

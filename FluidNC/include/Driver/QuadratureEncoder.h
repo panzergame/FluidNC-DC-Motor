@@ -23,12 +23,12 @@ public:
     uint32_t timer_hz() const;
 
     // Must be called before the hardware counter can move by half its range.
-    int32_t read();
-
     // timed is false without timing hardware, or if edges kept arriving during the snapshot.
     EncoderSample sample();
 
 private:
+    int32_t read();
+
     int32_t _unit     = -1;
     int16_t _last_raw = 0;
     int32_t _count    = 0;

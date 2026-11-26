@@ -70,7 +70,6 @@ class Board:
         self.capture = None
         self.moving = False
         self.alarm = False
-        self.raw_log = []
 
     def pump(self, duration=0.0):
         deadline = time.monotonic() + duration
@@ -96,7 +95,6 @@ class Board:
                     dict(sp=sp, pos=pos, err=err, vel=vel, vcmd=vcmd, drive=drive, moving=self.moving)
                 )
             return
-        self.raw_log.append(line)
         if "ALARM" in line:
             self.alarm = True
             log(f"< {line}")
@@ -157,14 +155,22 @@ class Board:
         self.pump(0.2)
         self.alarm = False
 
+    def wait_idle(self, timeout):
+        # G4 waits for the planner to drain, so its ok marks the end of motion.
+        return self.command("G4 P0.01", timeout=timeout)
+
+    def goto(self, pos, timeout):
+        self.command("G90")
+        self.command(f"G0 {self.axis}{pos:.3f}")
+        return self.wait_idle(timeout)
+
     def move(self, dist, feed):
         """Runs one relative move and returns its samples, moving then settling."""
         self.capture = []
         self.moving = True
         expected = abs(dist) / feed * 60.0
         ok = self.command(f"G1 {self.axis}{dist:.3f} F{feed:.0f}")
-        # G4 waits for the planner to drain, so its ok marks the end of motion.
-        ok = ok and self.command("G4 P0.01", timeout=expected + 10.0)
+        ok = ok and self.wait_idle(expected + 10.0)
         self.moving = False
         self.pump(SETTLE_S)
         samples, self.capture = self.capture, None
@@ -174,27 +180,24 @@ class Board:
 
 
 class Tuner:
-    PARAM_KEYS = (
-        "kff", "kfs", "kp", "ki", "kd", "position_kp",
-        "velocity_filter_hz", "setpoint_filter_hz", "position_deadband", "overshoot_counts",
-    )
+    PARAMS = {
+        "kff": "velocity_pid/kff",
+        "kfs": "velocity_pid/kfs",
+        "kp": "velocity_pid/kp",
+        "ki": "velocity_pid/ki",
+        "kd": "velocity_pid/kd",
+        "position_kp": "position_kp",
+        "velocity_filter_hz": "velocity_filter_hz",
+        "setpoint_filter_hz": "setpoint_filter_hz",
+        "position_deadband": "position_deadband",
+        "overshoot_counts": "overshoot_counts",
+    }
 
     def __init__(self, board, args):
         self.b = board
         self.args = args
         self.base = f"axes/{args.axis}/motor0/dc_servo"
-        self.params = {
-            "kff": f"{self.base}/velocity_pid/kff",
-            "kfs": f"{self.base}/velocity_pid/kfs",
-            "kp": f"{self.base}/velocity_pid/kp",
-            "ki": f"{self.base}/velocity_pid/ki",
-            "kd": f"{self.base}/velocity_pid/kd",
-            "position_kp": f"{self.base}/position_kp",
-            "velocity_filter_hz": f"{self.base}/velocity_filter_hz",
-            "setpoint_filter_hz": f"{self.base}/setpoint_filter_hz",
-            "position_deadband": f"{self.base}/position_deadband",
-            "overshoot_counts": f"{self.base}/overshoot_counts",
-        }
+        self.params = {k: f"{self.base}/{p}" for k, p in self.PARAMS.items()}
         self.original = {}
         self.good = {}
         self.history = []
@@ -216,9 +219,7 @@ class Tuner:
             if not self.b.command(f"$H{self.b.axis}", timeout=120.0):
                 raise TuneError("homing failed")
         if self.args.center is not None:
-            self.b.command("G90")
-            self.b.command(f"G0 {self.b.axis}{self.args.center}")
-            self.b.command("G4 P0.01", timeout=60.0)
+            self.b.goto(self.args.center, timeout=60.0)
         self.b.command("G91")
 
     def recover(self):
@@ -310,6 +311,9 @@ class Tuner:
             osc=osc,
         )
 
+    def score(self, m):
+        return m["err_rms"] / self.norm[0] + m["drive_std"] / self.norm[1]
+
     def evaluate(self, gains, label):
         self.apply(gains)
         try:
@@ -321,7 +325,7 @@ class Tuner:
         if self.norm is None or rejected:
             score = float("inf") if rejected else None
         else:
-            score = m["err_rms"] / self.norm[0] + m["drive_std"] / self.norm[1]
+            score = self.score(m)
         m.update(score=score, gains=dict(gains), label=label)
         self.history.append(m)
         s = "rejected" if rejected else (f"score {score:.3f}" if score is not None else "")
@@ -331,18 +335,25 @@ class Tuner:
         )
         return m
 
+    def best_of(self, candidates):
+        """Evaluates (gains, label) pairs; returns the best result, or None if there were none."""
+        best = None
+        for gains, label in candidates:
+            m = self.evaluate(gains, label)
+            if best is None or m["score"] < best["score"]:
+                best = m
+        return best
+
     def search(self, current, keys, passes):
         cur_score = self.evaluate(current, "current")["score"]
         for mults in passes:
             for key in keys:
                 if current[key] == 0:
                     continue
-                best = None
-                for mult in mults:
-                    cand = dict(current, **{key: current[key] * mult})
-                    m = self.evaluate(cand, f"{key}={cand[key]:.5g} (x{mult})")
-                    if best is None or m["score"] < best["score"]:
-                        best = m
+                best = self.best_of(
+                    (dict(current, **{key: current[key] * mult}), f"{key}={current[key] * mult:.5g} (x{mult})")
+                    for mult in mults
+                )
                 self.apply(current)
                 if best["score"] < cur_score * (1.0 - self.margin):
                     current, cur_score = best["gains"], best["score"]
@@ -436,7 +447,7 @@ class Tuner:
             max(statistics.fmean(m["err_rms"] for m in base), 1.0),
             max(statistics.fmean(m["drive_std"] for m in base), 0.1),
         )
-        scores = [m["err_rms"] / self.norm[0] + m["drive_std"] / self.norm[1] for m in base]
+        scores = [self.score(m) for m in base]
         self.margin = max(0.03, abs(scores[0] - scores[1]) / statistics.fmean(scores))
         cur_score = statistics.fmean(scores)
         log(f"  baseline score {cur_score:.3f}, noise margin {self.margin:.1%}")
@@ -464,13 +475,7 @@ class Tuner:
                 ("setpoint_filter_hz", (25, 50, 100, 200)),
             ):
                 log(f"Phase 3: {key}")
-                best = None
-                for hz in candidates:
-                    if hz == gains[key]:
-                        continue
-                    m = self.evaluate(dict(gains, **{key: hz}), f"{key}={hz}")
-                    if best is None or m["score"] < best["score"]:
-                        best = m
+                best = self.best_of((dict(gains, **{key: hz}), f"{key}={hz}") for hz in candidates if hz != gains[key])
                 if best is not None and best["score"] < cur_score * (1.0 - self.margin):
                     gains, cur_score = best["gains"], best["score"]
                     self.good = dict(gains)
@@ -491,15 +496,13 @@ class Tuner:
         if self.args.park is None:
             return
         log(f"> park at {self.b.axis}{self.args.park:g}")
-        self.b.command("G90")
-        self.b.command(f"G0 {self.b.axis}{self.args.park:.3f}")
-        if not self.b.command("G4 P0.01", timeout=120.0):
+        if not self.b.goto(self.args.park, timeout=120.0):
             log("  park failed")
 
     def restore(self):
         try:
             self.b.reset_alarm()
-            self.apply({k: v for k, v in self.original.items() if k in self.params})
+            self.apply(self.original)
             if "report_ms" in self.original:
                 self.b.set(f"{self.base}/report_ms", self.original["report_ms"])
             log("Original gains restored")
@@ -542,8 +545,8 @@ def main():
     start = {}
     for item in args.start:
         key, sep, val = item.partition("=")
-        if not sep or key not in Tuner.PARAM_KEYS:
-            parser.error(f"--start {item!r}: expected KEY=VALUE with KEY in {', '.join(Tuner.PARAM_KEYS)}")
+        if not sep or key not in Tuner.PARAMS:
+            parser.error(f"--start {item!r}: expected KEY=VALUE with KEY in {', '.join(Tuner.PARAMS)}")
         start[key] = float(val)
     args.start = start
 

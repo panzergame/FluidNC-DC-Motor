@@ -14,14 +14,10 @@ QuadratureEncoder::QuadratureEncoder(pinnum_t a, pinnum_t b, uint32_t filter_ns)
     log_error("Quadrature encoder is not supported on this platform");
 }
 
-int32_t QuadratureEncoder::read() {
-    return 0;
-}
-
 uint32_t QuadratureEncoder::timer_hz() const {
     return 0;
 }
 
 EncoderSample QuadratureEncoder::sample() {
-    return { read(), 0, false };
+    return { 0, 0, false };
 }

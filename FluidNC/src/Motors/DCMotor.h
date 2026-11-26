@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "MotorDriver.h"
+#include "Configuration/Configurable.h"
 #include "Pin.h"
 
 namespace MotorDrivers {
@@ -14,15 +14,9 @@ namespace MotorDrivers {
         average motor voltage and zero duty coasts.  Lock-antiphase is more linear near
         zero but pushes ripple current through the motor even at standstill.
     */
-    class DCMotor : public MotorDriver {
+    class DCMotor : public Configuration::Configurable {
     public:
-        DCMotor(const char* name) : MotorDriver(name) {}
-
-        // Overrides for inherited methods
-        void init() override;                                           // must run before set()
-        bool set_homing_mode(bool isHoming) override { return false; }  // no feedback to home against
-        bool can_self_home() override { return false; }
-        void set_disable(bool disable) override;  // coasts: a braked bridge still dissipates backdrive
+        void init();  // must run before set()
 
         // Signed duty, clamped to +/- maxDuty(); positive increases axis position.  Zero
         // coasts, or brakes with slow_decay.
@@ -38,10 +32,8 @@ namespace MotorDrivers {
         void validate() override;
         void group(Configuration::HandlerBase& handler) override;
 
-    protected:
-        void config_message() override;
-
     private:
+        void config_message();
         void write(uint32_t in1, uint32_t in2);
 
         Pin      _in1_pin;

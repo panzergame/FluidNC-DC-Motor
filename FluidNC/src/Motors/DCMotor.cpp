@@ -27,12 +27,6 @@ namespace MotorDrivers {
         config_message();
     }
 
-    void DCMotor::set_disable(bool disable) {
-        if (disable) {
-            coast();
-        }
-    }
-
     void DCMotor::set(int32_t duty) {
         int32_t limit = int32_t(_max_duty);
         if (duty > limit) {

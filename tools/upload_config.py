@@ -17,7 +17,6 @@ from pathlib import Path
 import serial
 from serial.tools.list_ports import comports
 
-SOH = 0x01
 STX = 0x02
 EOT = 0x04
 ACK = 0x06
@@ -49,15 +48,10 @@ def pick_port():
 
 
 def open_port(port, baud):
-    ser = serial.Serial()
-    ser.port = port
-    ser.baudrate = baud
-    ser.timeout = 0.1
     # Keep pyserial's default (DTR and RTS both asserted), which matches what the
     # Linux kernel raises on open. Clearing them makes pyserial drop DTR before RTS,
     # and that transient RTS-only state pulls EN low on ESP32 auto-reset circuits.
-    ser.open()
-    return ser
+    return serial.Serial(port, baud, timeout=0.1)
 
 
 def sync(ser, interval=0.5, max_wait=15.0):

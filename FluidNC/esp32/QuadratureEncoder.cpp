@@ -14,6 +14,7 @@
 
 #include <driver/pcnt.h>
 #include <esp_rom_sys.h>
+#include <soc/soc.h>  // APB_CLK_FREQ
 #include <soc/soc_caps.h>
 
 #if SOC_MCPWM_SUPPORTED
@@ -29,7 +30,7 @@
 static constexpr int16_t counter_limit = 32767;
 
 // PCNT counts its glitch filter in APB clock cycles, in a 10-bit field.
-static constexpr uint32_t apb_mhz        = 80;
+static constexpr uint32_t apb_mhz        = APB_CLK_FREQ / 1000000;
 static constexpr uint32_t max_filter_val = 1023;
 
 static int32_t allocateUnit() {
@@ -42,7 +43,7 @@ static int32_t allocateUnit() {
 
 #if SOC_MCPWM_SUPPORTED
 // The capture timer runs from APB regardless of the MCPWM group clock.
-static constexpr uint32_t capture_timer_hz = apb_mhz * 1000000;
+static constexpr uint32_t capture_timer_hz = APB_CLK_FREQ;
 
 static int capChannelsUsed[SOC_MCPWM_GROUPS] = {};
 

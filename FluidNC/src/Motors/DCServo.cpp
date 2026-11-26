@@ -275,14 +275,14 @@ namespace MotorDrivers {
 
         // A jump faster than max_rate allows is a redefined position (homing, reset after an
         // alarm), not a move; chasing it would be a lurch.
-        auto  axis     = Axes::_axis[_axis];
-        float max_step = axis->_maxRate / 60.0f * axis->_stepsPerMm * _counts_per_step * _dt;
-        if (std::fabs(setpoint - _last_setpoint) > 4.0f * max_step + 2.0f) {
+        auto  axis           = Axes::_axis[_axis];
+        float max_step       = axis->_maxRate / 60.0f * axis->_stepsPerMm * _counts_per_step * _dt;
+        float setpoint_delta = setpoint - _last_setpoint;
+        if (std::fabs(setpoint_delta) > 4.0f * max_step + 2.0f) {
             resync(setpoint, measured);
             return;
         }
 
-        float setpoint_delta = setpoint - _last_setpoint;
         _setpoint_vel += (setpoint_delta / _dt - _setpoint_vel) * _sp_alpha;
         track_motion(setpoint_delta);
         float measured_rate = (measured - _last_measured) / _dt;
@@ -297,10 +297,11 @@ namespace MotorDrivers {
         _last_setpoint = setpoint;
         _last_measured = measured;
 
-        float error       = setpoint - (measured + _offset);
-        bool  approaching = _homing && Machine::Homing::approach();
+        float error        = setpoint - (measured + _offset);
+        bool  approaching  = _homing && Machine::Homing::approach();
+        bool  stall_homing = approaching && _homing_stall_error;  // left to stall_check()
         // Approaching a hard stop is meant to build up error.
-        if (!(approaching && _homing_stall_error) && _max_following_error && std::fabs(error) > float(_max_following_error)) {
+        if (!stall_homing && _max_following_error && std::fabs(error) > float(_max_following_error)) {
             log_error(name() << " " << axisName() << " following error " << error << " counts exceeds " << _max_following_error);
             trip();
             return;
@@ -317,19 +318,18 @@ namespace MotorDrivers {
         float drive        = 0.0f;
         float drive_limit  = _homing ? _homing_max_drive : Pid::max_output;
         bool  at_rest      = _position_deadband && state_is(State::Idle);
-        // At rest the motion direction lingers for a while; rest_overshoot() owns _rest_dir by then.
-        if (_motion_dir != 0 && !at_rest) {
-            _rest_dir = _motion_dir;
-        }
+        float loop_error   = error;
+        bool  coast        = false;
         if (!at_rest) {
             _parked = false;
-        }
-        float loop_error = error;
-        bool  coast;
-        if (at_rest && _overshoot_counts) {
+            // At rest the motion direction lingers for a while; rest_overshoot() owns _rest_dir by then.
+            if (_motion_dir != 0) {
+                _rest_dir = _motion_dir;
+            }
+        } else if (_overshoot_counts) {
             coast = rest_overshoot(error, loop_error);
         } else {
-            coast = at_rest && std::fabs(error) <= float(_position_deadband);
+            coast = std::fabs(error) <= float(_position_deadband);
         }
         if (coast) {
             _pid->reset();
@@ -340,7 +340,7 @@ namespace MotorDrivers {
 
         // Jams under the following error threshold; relative to the active limit so it also
         // fires under homing_max_drive.  Stall homing approaches are left to stall_check.
-        if (_stall_ms && !(approaching && _homing_stall_error) && std::fabs(drive) >= drive_limit * _stall_drive / 100.0f &&
+        if (_stall_ms && !stall_homing && std::fabs(drive) >= drive_limit * _stall_drive / 100.0f &&
             std::fabs(_measured_vel) < _stall_velocity) {
             ++_jam_ticks;
             if (float(_jam_ticks) * _dt * 1000.0f >= float(_stall_ms)) {
@@ -539,7 +539,7 @@ namespace MotorDrivers {
         // tuning.  0 disables it.
         handler.item("report_ms", _report_ms, 0, 60000);
 
-        handler.section("dc_motor", _dc, "dc_motor");
+        handler.section("dc_motor", _dc);
         handler.section("velocity_pid", _pid);
 
         Servo::group(handler);
