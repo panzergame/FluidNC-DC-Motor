@@ -41,6 +41,43 @@ static int32_t allocateUnit() {
     return nextUnit++;
 }
 
+static void configureCounter(pcnt_unit_t u, pinnum_t a, pinnum_t b, uint32_t filter_val) {
+    // Each input counts both of its edges, and the level of the other input
+    // decides the direction - the standard x4 arrangement from the ESP-IDF
+    // rotary encoder example.
+    pcnt_config_t cfg = {};
+    cfg.counter_h_lim = counter_limit;
+    cfg.counter_l_lim = -counter_limit;
+    cfg.unit          = u;
+
+    cfg.pulse_gpio_num = a;
+    cfg.ctrl_gpio_num  = b;
+    cfg.channel        = PCNT_CHANNEL_0;
+    cfg.pos_mode       = PCNT_COUNT_DEC;
+    cfg.neg_mode       = PCNT_COUNT_INC;
+    cfg.hctrl_mode     = PCNT_MODE_KEEP;
+    cfg.lctrl_mode     = PCNT_MODE_REVERSE;
+    pcnt_unit_config(&cfg);
+
+    cfg.pulse_gpio_num = b;
+    cfg.ctrl_gpio_num  = a;
+    cfg.channel        = PCNT_CHANNEL_1;
+    cfg.pos_mode       = PCNT_COUNT_INC;
+    cfg.neg_mode       = PCNT_COUNT_DEC;
+    pcnt_unit_config(&cfg);
+
+    if (filter_val) {
+        pcnt_set_filter_value(u, uint16_t(filter_val));
+        pcnt_filter_enable(u);
+    } else {
+        pcnt_filter_disable(u);
+    }
+
+    pcnt_counter_pause(u);
+    pcnt_counter_clear(u);
+    pcnt_counter_resume(u);
+}
+
 #if SOC_MCPWM_SUPPORTED
 // The capture timer runs from APB regardless of the MCPWM group clock.
 static constexpr uint32_t capture_timer_hz = APB_CLK_FREQ;
@@ -130,6 +167,25 @@ static bool enableCapture(const CaptureInput& input, pinnum_t pin) {
 #    endif
     return true;
 }
+
+static bool setupCapture(pinnum_t a, pinnum_t b, CaptureInput& cap_a, CaptureInput& cap_b, uint32_t& offset) {
+    if (!allocateCapture(cap_a, cap_b)) {
+        log_warn("Out of MCPWM capture channels for encoder timing; velocity will be count based");
+        return false;
+    }
+    if (!enableCapture(cap_a, a) || !enableCapture(cap_b, b)) {
+        log_error("Encoder timing setup failed; velocity will be count based");
+        return false;
+    }
+    if (cap_a.unit != cap_b.unit) {
+        if (!measureCaptureOffset(cap_a, cap_b, offset)) {
+            log_error("Encoder capture timers could not be aligned; velocity will be count based");
+            return false;
+        }
+        log_info("    Encoder timing split across MCPWM" << cap_a.unit << " and MCPWM" << cap_b.unit << ", offset " << offset);
+    }
+    return true;
+}
 #endif
 
 QuadratureEncoder::QuadratureEncoder(pinnum_t a, pinnum_t b, uint32_t filter_ns) {
@@ -138,46 +194,12 @@ QuadratureEncoder::QuadratureEncoder(pinnum_t a, pinnum_t b, uint32_t filter_ns)
         log_error("Out of PCNT units for quadrature encoder");
         return;
     }
-    auto u = pcnt_unit_t(unit);
-
-    // Each input counts both of its edges, and the level of the other input
-    // decides the direction - the standard x4 arrangement from the ESP-IDF
-    // rotary encoder example.
-    pcnt_config_t cfg = {};
-    cfg.counter_h_lim = counter_limit;
-    cfg.counter_l_lim = -counter_limit;
-    cfg.unit          = u;
-
-    cfg.pulse_gpio_num = a;
-    cfg.ctrl_gpio_num  = b;
-    cfg.channel        = PCNT_CHANNEL_0;
-    cfg.pos_mode       = PCNT_COUNT_DEC;
-    cfg.neg_mode       = PCNT_COUNT_INC;
-    cfg.hctrl_mode     = PCNT_MODE_KEEP;
-    cfg.lctrl_mode     = PCNT_MODE_REVERSE;
-    pcnt_unit_config(&cfg);
-
-    cfg.pulse_gpio_num = b;
-    cfg.ctrl_gpio_num  = a;
-    cfg.channel        = PCNT_CHANNEL_1;
-    cfg.pos_mode       = PCNT_COUNT_INC;
-    cfg.neg_mode       = PCNT_COUNT_DEC;
-    pcnt_unit_config(&cfg);
 
     uint32_t filter_val = filter_ns * apb_mhz / 1000;
     if (filter_val > max_filter_val) {
         filter_val = max_filter_val;
     }
-    if (filter_val) {
-        pcnt_set_filter_value(u, uint16_t(filter_val));
-        pcnt_filter_enable(u);
-    } else {
-        pcnt_filter_disable(u);
-    }
-
-    pcnt_counter_pause(u);
-    pcnt_counter_clear(u);
-    pcnt_counter_resume(u);
+    configureCounter(pcnt_unit_t(unit), a, b, filter_val);
 
     _unit = unit;
 
@@ -189,20 +211,8 @@ QuadratureEncoder::QuadratureEncoder(pinnum_t a, pinnum_t b, uint32_t filter_ns)
 
 #if SOC_MCPWM_SUPPORTED
     CaptureInput cap_a, cap_b;
-    if (!allocateCapture(cap_a, cap_b)) {
-        log_warn("Out of MCPWM capture channels for encoder timing; velocity will be count based");
+    if (!setupCapture(a, b, cap_a, cap_b, _b_offset)) {
         return;
-    }
-    if (!enableCapture(cap_a, a) || !enableCapture(cap_b, b)) {
-        log_error("Encoder timing setup failed; velocity will be count based");
-        return;
-    }
-    if (cap_a.unit != cap_b.unit) {
-        if (!measureCaptureOffset(cap_a, cap_b, _b_offset)) {
-            log_error("Encoder capture timers could not be aligned; velocity will be count based");
-            return;
-        }
-        log_info("    Encoder timing split across MCPWM" << cap_a.unit << " and MCPWM" << cap_b.unit << ", offset " << _b_offset);
     }
     _cap_unit_a = int8_t(cap_a.unit);
     _cap_chan_a = int8_t(cap_a.channel);

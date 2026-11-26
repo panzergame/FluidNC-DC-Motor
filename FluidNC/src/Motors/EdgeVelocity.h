@@ -29,10 +29,13 @@ namespace MotorDrivers {
             uint32_t time;
         };
 
-        void restart(int32_t count, uint32_t edge_time);
+        // Marks
         void push(int32_t count, uint32_t edge_time);
+        void restart(int32_t count, uint32_t edge_time);
         // i edges' worth of marks back from the newest.
         const Mark& back(int i) const { return _marks[(_head + history - i) % history]; }
+
+        // Edge spacing
 
         // Edge index of the edge that produced a count, in the direction of
         // travel: counting up, count c was reached by the edge between c-1
@@ -43,6 +46,10 @@ namespace MotorDrivers {
         // corrected for the uneven edge spacing.
         float distance(int32_t from, int32_t to);
         void  learn();
+
+        // Velocity
+        float       idle(float dt);
+        const Mark* span_start(uint32_t edge_time, float dt, float timer_hz) const;
 
         // A full quadrature cycle of single-count marks, plus the newest.
         static constexpr int history = 5;

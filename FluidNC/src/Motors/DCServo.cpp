@@ -146,6 +146,32 @@ namespace MotorDrivers {
         _pid->reset();
     }
 
+    // A jump faster than max_rate allows is a redefined position (homing, reset after an
+    // alarm), not a move; chasing it would be a lurch.
+    bool DCServo::setpoint_jumped(float setpoint_delta) const {
+        auto  axis     = Axes::_axis[_axis];
+        float max_step = axis->_maxRate / 60.0f * axis->_stepsPerMm * _encoder->counts_per_step() * _dt;
+        return std::fabs(setpoint_delta) > 4.0f * max_step + 2.0f;
+    }
+
+    void DCServo::update_velocities(float setpoint, float setpoint_delta, float measured, const EncoderSample& sample) {
+        _setpoint_vel += (setpoint_delta / _dt - _setpoint_vel) * _sp_alpha;
+        track_motion(setpoint_delta);
+
+        float measured_rate = (measured - _last_measured) / _dt;
+        if (sample.timed) {
+            measured_rate = _edge_vel.update(sample.count, sample.edge_time, _dt, float(_encoder->timer_hz()));
+        } else if (_encoder->has_timing()) {
+            // Edges kept the snapshot from settling; a span across the untimed
+            // count would be misread, so only the speed carries over.
+            _edge_vel.skip();
+        }
+        _measured_vel += (measured_rate - _measured_vel) * _vel_alpha;
+
+        _last_setpoint = setpoint;
+        _last_measured = measured;
+    }
+
     // The filtered setpoint velocity dips between slow steps and decays slowly after a move,
     // so the step spacing decides how long a pause still belongs to the motion.
     void DCServo::track_motion(float setpoint_delta) {
@@ -175,37 +201,52 @@ namespace MotorDrivers {
         protocol_send_event(&followingErrorEvent);
     }
 
+    // Release only once the alarm has been raised, then cleared.  The trip raises a
+    // hard stop (Critical), and a reset only passes through Alarm with unhomed axes.
+    void DCServo::update_trip() {
+        if (!_tripped) {
+            return;
+        }
+        if (state_is(State::Alarm) || state_is(State::Critical)) {
+            _trip_alarmed = true;
+        } else if (_trip_alarmed) {
+            _tripped = false;
+        }
+    }
+
+    bool DCServo::following_error_exceeded(float error) {
+        if (_max_following_error && std::fabs(error) > float(_max_following_error)) {
+            log_error(name() << " " << axisName() << " following error " << error << " counts exceeds " << _max_following_error);
+            return true;
+        }
+        return false;
+    }
+
+    // Jams under the following error threshold; relative to the active limit so it also
+    // fires under homing/max_drive.  Stall homing approaches are left to stall_check.
+    bool DCServo::jammed(float drive, float drive_limit, float error, bool stall_homing) {
+        if (_stall_ms && !stall_homing && std::fabs(drive) >= drive_limit * _stall_drive / 100.0f &&
+            std::fabs(_measured_vel) < _stall_velocity) {
+            ++_jam_ticks;
+        } else {
+            _jam_ticks = 0;
+            return false;
+        }
+        if (elapsed_ms(_jam_ticks) < float(_stall_ms)) {
+            return false;
+        }
+        log_error(name() << " " << axisName() << " stalled at " << drive << "% drive for " << _stall_ms << "ms, error " << error
+                         << " counts");
+        return true;
+    }
+
     bool DCServo::stall_check(float setpoint, float measured, float error, bool approaching) {
         if (_stalled) {
-            if (approaching) {
-                // The setpoint keeps advancing until the limit event stops
-                // the planner; tracking it would only push into the stop.
-                resync(setpoint, measured);
-                _dc->set(0);
-                return true;
-            }
-            if (std::fabs(measured - _stall_pos) > float(_homing->_release_counts)) {
-                release_stall();
-            }
+            return hold_stall(setpoint, measured, approaching);
+        }
+        if (!detect_stall(error, approaching)) {
             return false;
         }
-
-        if (!approaching || !can_self_home()) {
-            _stall_ticks = 0;
-            return false;
-        }
-
-        // Error alone also grows while accelerating, and velocity drops between slow steps;
-        // only both, held for a while, mean the axis is pushing against something.
-        if (std::fabs(error) > float(_homing->_stall_error) && std::fabs(_measured_vel) < _homing->_stall_velocity) {
-            ++_stall_ticks;
-        } else {
-            _stall_ticks = 0;
-        }
-        if (float(_stall_ticks) * _dt * 1000.0f < float(_homing->_stall_ms)) {
-            return false;
-        }
-
         _stall_ticks    = 0;
         _stalled        = true;
         _stall_positive = error > 0.0f;
@@ -217,9 +258,57 @@ namespace MotorDrivers {
         return true;
     }
 
+    bool DCServo::hold_stall(float setpoint, float measured, bool approaching) {
+        if (approaching) {
+            // The setpoint keeps advancing until the limit event stops
+            // the planner; tracking it would only push into the stop.
+            resync(setpoint, measured);
+            _dc->set(0);
+            return true;
+        }
+        if (std::fabs(measured - _stall_pos) > float(_homing->_release_counts)) {
+            release_stall();
+        }
+        return false;
+    }
+
+    // Error alone also grows while accelerating, and velocity drops between slow steps;
+    // only both, held for a while, mean the axis is pushing against something.
+    bool DCServo::detect_stall(float error, bool approaching) {
+        if (!approaching || !can_self_home()) {
+            _stall_ticks = 0;
+            return false;
+        }
+        if (std::fabs(error) > float(_homing->_stall_error) && std::fabs(_measured_vel) < _homing->_stall_velocity) {
+            ++_stall_ticks;
+        } else {
+            _stall_ticks = 0;
+            return false;
+        }
+        return elapsed_ms(_stall_ticks) >= float(_homing->_stall_ms);
+    }
+
     void DCServo::release_stall() {
         _stalled = false;
         _motor->softLimit(_stall_positive, false);
+    }
+
+    // Stiction leaves the last count or two uncorrected, so at rest the integral would only
+    // wind up into a stalled-motor drive.  Idle rather than zero setpoint velocity, because
+    // slow moves sit still for many ticks between steps.
+    bool DCServo::rest_coast(float error, float& loop_error) {
+        if (!_position_deadband || !state_is(State::Idle)) {
+            _parked = false;
+            // At rest the motion direction lingers for a while; rest_overshoot() owns _rest_dir by then.
+            if (_motion_dir != 0) {
+                _rest_dir = _motion_dir;
+            }
+            return false;
+        }
+        if (_overshoot_counts) {
+            return rest_overshoot(error, loop_error);
+        }
+        return std::fabs(error) <= float(_position_deadband);
     }
 
     // Parked, the band runs from position_deadband short of the target to position_deadband
@@ -240,6 +329,22 @@ namespace MotorDrivers {
         return _parked;
     }
 
+    void DCServo::report(float setpoint, float measured, float error, float velocity_cmd, float drive) {
+        if (!_report_ms) {
+            return;
+        }
+        if (std::fabs(error) > _report_max) {
+            _report_max = std::fabs(error);
+        }
+        _report_ticks += _update_ticks;
+        if (_report_ticks >= pdMS_TO_TICKS(_report_ms)) {
+            log_info(axisName() << " sp:" << setpoint << " pos:" << (measured + _offset) << " err_max:" << _report_max
+                                << " vel:" << _measured_vel << "/" << velocity_cmd << " drive:" << drive << "%");
+            _report_ticks = 0;
+            _report_max   = 0.0f;
+        }
+    }
+
     void DCServo::update() {
         EncoderSample sample   = _encoder->sample();
         float         measured = float(sample.count);
@@ -251,16 +356,8 @@ namespace MotorDrivers {
         if (_stalled && !_homing_mode) {
             release_stall();
         }
+        update_trip();
 
-        if (_tripped) {
-            // Release only once the alarm has been raised, then cleared.  The trip raises a
-            // hard stop (Critical), and a reset only passes through Alarm with unhomed axes.
-            if (state_is(State::Alarm) || state_is(State::Critical)) {
-                _trip_alarmed = true;
-            } else if (_trip_alarmed) {
-                _tripped = false;
-            }
-        }
 
         if (_disabled || _tripped) {
             _dc->coast();  // not set(0): that brakes with slow_decay
@@ -268,36 +365,19 @@ namespace MotorDrivers {
             return;
         }
 
-        // A jump faster than max_rate allows is a redefined position (homing, reset after an
-        // alarm), not a move; chasing it would be a lurch.
-        auto  axis           = Axes::_axis[_axis];
-        float max_step       = axis->_maxRate / 60.0f * axis->_stepsPerMm * _encoder->counts_per_step() * _dt;
         float setpoint_delta = setpoint - _last_setpoint;
-        if (std::fabs(setpoint_delta) > 4.0f * max_step + 2.0f) {
+        if (setpoint_jumped(setpoint_delta)) {
             resync(setpoint, measured);
             return;
         }
 
-        _setpoint_vel += (setpoint_delta / _dt - _setpoint_vel) * _sp_alpha;
-        track_motion(setpoint_delta);
-        float measured_rate = (measured - _last_measured) / _dt;
-        if (sample.timed) {
-            measured_rate = _edge_vel.update(sample.count, sample.edge_time, _dt, float(_encoder->timer_hz()));
-        } else if (_encoder->has_timing()) {
-            // Edges kept the snapshot from settling; a span across the untimed
-            // count would be misread, so only the speed carries over.
-            _edge_vel.skip();
-        }
-        _measured_vel += (measured_rate - _measured_vel) * _vel_alpha;
-        _last_setpoint = setpoint;
-        _last_measured = measured;
+        update_velocities(setpoint, setpoint_delta, measured, sample);
 
         float error        = setpoint - (measured + _offset);
         bool  approaching  = _homing_mode && Machine::Homing::approach();
         bool  stall_homing = approaching && can_self_home();  // left to stall_check()
         // Approaching a hard stop is meant to build up error.
-        if (!stall_homing && _max_following_error && std::fabs(error) > float(_max_following_error)) {
-            log_error(name() << " " << axisName() << " following error " << error << " counts exceeds " << _max_following_error);
+        if (!stall_homing && following_error_exceeded(error)) {
             trip();
             return;
         }
@@ -306,61 +386,24 @@ namespace MotorDrivers {
             return;
         }
 
-        // Stiction leaves the last count or two uncorrected, so at rest the integral would only
-        // wind up into a stalled-motor drive.  Idle rather than zero setpoint velocity, because
-        // slow moves sit still for many ticks between steps.
+        float drive_limit  = _homing_mode && _homing ? _homing->_max_drive : Pid::max_output;
+        float loop_error   = error;
         float velocity_cmd = 0.0f;
         float drive        = 0.0f;
-        float drive_limit  = _homing_mode && _homing ? _homing->_max_drive : Pid::max_output;
-        bool  at_rest      = _position_deadband && state_is(State::Idle);
-        float loop_error   = error;
-        bool  coast        = false;
-        if (!at_rest) {
-            _parked = false;
-            // At rest the motion direction lingers for a while; rest_overshoot() owns _rest_dir by then.
-            if (_motion_dir != 0) {
-                _rest_dir = _motion_dir;
-            }
-        } else if (_overshoot_counts) {
-            coast = rest_overshoot(error, loop_error);
-        } else {
-            coast = std::fabs(error) <= float(_position_deadband);
-        }
-        if (coast) {
+        if (rest_coast(error, loop_error)) {
             _pid->reset();
         } else {
             velocity_cmd = _setpoint_vel + _position_kp * loop_error;
             drive        = _pid->update(velocity_cmd, _measured_vel, float(_motion_dir), _dt, drive_limit);
         }
 
-        // Jams under the following error threshold; relative to the active limit so it also
-        // fires under homing/max_drive.  Stall homing approaches are left to stall_check.
-        if (_stall_ms && !stall_homing && std::fabs(drive) >= drive_limit * _stall_drive / 100.0f &&
-            std::fabs(_measured_vel) < _stall_velocity) {
-            ++_jam_ticks;
-            if (float(_jam_ticks) * _dt * 1000.0f >= float(_stall_ms)) {
-                log_error(name() << " " << axisName() << " stalled at " << drive << "% drive for " << _stall_ms << "ms, error " << error
-                                 << " counts");
-                trip();
-                return;
-            }
-        } else {
-            _jam_ticks = 0;
+        if (jammed(drive, drive_limit, error, stall_homing)) {
+            trip();
+            return;
         }
         _dc->set(int32_t(drive * float(_dc->maxDuty()) / 100.0f));
 
-        if (_report_ms) {
-            if (std::fabs(error) > _report_max) {
-                _report_max = std::fabs(error);
-            }
-            _report_ticks += _update_ticks;
-            if (_report_ticks >= pdMS_TO_TICKS(_report_ms)) {
-                log_info(axisName() << " sp:" << setpoint << " pos:" << (measured + _offset) << " err_max:" << _report_max
-                                    << " vel:" << _measured_vel << "/" << velocity_cmd << " drive:" << drive << "%");
-                _report_ticks = 0;
-                _report_max   = 0.0f;
-            }
-        }
+        report(setpoint, measured, error, velocity_cmd, drive);
     }
 
     void DCServo::validate() {

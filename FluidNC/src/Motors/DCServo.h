@@ -44,15 +44,33 @@ namespace MotorDrivers {
     private:
         static void control_task(void* arg);
 
-        void resync(float setpoint, float measured);  // resume from rest without chasing an old error
-        void update_filters();
-        void track_motion(float setpoint_delta);
-        bool rest_overshoot(float error, float& loop_error);  // true while the motor should coast
-        void trip();                                          // coasts and alarms; the caller logs why
+        float elapsed_ms(uint32_t ticks) const { return float(ticks) * _dt * 1000.0f; }
 
-        // Returns true while the motor is held at a hard stop and must not be driven.
+        // Estimation
+        void update_filters();
+        void resync(float setpoint, float measured);  // resume from rest without chasing an old error
+        bool setpoint_jumped(float setpoint_delta) const;
+        void update_velocities(float setpoint, float setpoint_delta, float measured, const EncoderSample& sample);
+        void track_motion(float setpoint_delta);
+
+        // Faults: the checks log why, the caller trips
+        void trip();  // coasts and alarms
+        void update_trip();
+        bool following_error_exceeded(float error);
+        bool jammed(float drive, float drive_limit, float error, bool stall_homing);
+
+        // Stall homing.  stall_check() returns true while the motor is held at a hard stop
+        // and must not be driven.
         bool stall_check(float setpoint, float measured, float error, bool approaching);
+        bool hold_stall(float setpoint, float measured, bool approaching);
+        bool detect_stall(float error, bool approaching);
         void release_stall();
+
+        // Rest: both return true while the motor should coast
+        bool rest_coast(float error, float& loop_error);
+        bool rest_overshoot(float error, float& loop_error);
+
+        void report(float setpoint, float measured, float error, float velocity_cmd, float drive);
 
         DCMotor*     _dc      = nullptr;
         Pid*         _pid     = nullptr;

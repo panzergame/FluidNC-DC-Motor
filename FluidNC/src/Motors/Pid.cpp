@@ -9,11 +9,9 @@
 #include <cmath>      // M_PI
 
 namespace MotorDrivers {
-    float Pid::update(float setpoint, float measured, float friction_ref, float dt, float limit) {
-        float error = setpoint - measured;
-
-        // The first sample has no previous measurement to differentiate
-        // against; differentiating against zero would be a spike.
+    // The first sample has no previous measurement to differentiate
+    // against; differentiating against zero would be a spike.
+    void Pid::update_derivative(float measured, float dt) {
         if (_primed) {
             float d = -_kd * (measured - _prev_measured) / dt;
             if (_d_filter_hz > 0.0f) {
@@ -25,6 +23,11 @@ namespace MotorDrivers {
         }
         _prev_measured = measured;
         _primed        = true;
+    }
+
+    float Pid::update(float setpoint, float measured, float friction_ref, float dt, float limit) {
+        float error = setpoint - measured;
+        update_derivative(measured, dt);
 
         float friction = 0.0f;
         if (friction_ref != 0.0f) {

@@ -25,6 +25,8 @@ namespace MotorDrivers {
         void group(Configuration::HandlerBase& handler) override;
 
     private:
+        void update_derivative(float measured, float dt);
+
         float _kp          = 0.0f;
         float _ki          = 0.0f;
         float _kd          = 0.0f;

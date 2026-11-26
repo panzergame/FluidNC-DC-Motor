@@ -89,6 +89,46 @@ namespace MotorDrivers {
         }
     }
 
+    float EdgeVelocity::idle(float dt) {
+        _idle_s += dt;
+        if (_idle_s >= idle_timeout_s) {
+            _n_marks   = 0;
+            _direction = 0;
+            _velocity  = 0.0f;
+            return 0.0f;
+        }
+        // Holding the last value would hide a stop.  The next edge has not
+        // come yet, so the speed is at most one count over the time since
+        // the last one - which may have been at the very end of its
+        // period, hence one period less.
+        float since = _idle_s - dt;
+        if (since > 0.0f && std::fabs(_velocity) > 1.0f / since) {
+            _velocity = std::copysign(1.0f / since, _velocity);
+        }
+        return _velocity;
+    }
+
+    // The span reaches back just over one control period: a span of fixed counts grows to
+    // many periods at low speed, and that delay makes the velocity loop oscillate.  So short
+    // a span exposes the uneven edge spacing, hence the learnt weights in distance().
+    const EdgeVelocity::Mark* EdgeVelocity::span_start(uint32_t edge_time, float dt, float timer_hz) const {
+        uint32_t    min_window = uint32_t(dt * timer_hz);
+        uint32_t    max_window = uint32_t(max_window_s * timer_hz);
+        const Mark* ref        = nullptr;
+        for (int i = 1; i < _n_marks; ++i) {
+            const Mark& m       = back(i);
+            uint32_t    elapsed = edge_time - m.time;
+            if (ref && elapsed > max_window) {
+                break;
+            }
+            ref = &m;
+            if (elapsed >= min_window) {
+                break;
+            }
+        }
+        return ref;
+    }
+
     float EdgeVelocity::update(int32_t count, uint32_t edge_time, float dt, float timer_hz) {
         if (!_primed) {
             // The last edge may be arbitrarily old, so it cannot anchor a span.
@@ -105,22 +145,7 @@ namespace MotorDrivers {
         _last         = count;
 
         if (delta == 0) {
-            _idle_s += dt;
-            if (_idle_s >= idle_timeout_s) {
-                _n_marks   = 0;
-                _direction = 0;
-                _velocity  = 0.0f;
-                return 0.0f;
-            }
-            // Holding the last value would hide a stop.  The next edge has not
-            // come yet, so the speed is at most one count over the time since
-            // the last one - which may have been at the very end of its
-            // period, hence one period less.
-            float since = _idle_s - dt;
-            if (since > 0.0f && std::fabs(_velocity) > 1.0f / since) {
-                _velocity = std::copysign(1.0f / since, _velocity);
-            }
-            return _velocity;
+            return idle(dt);
         }
         _idle_s = 0.0f;
 
@@ -137,25 +162,8 @@ namespace MotorDrivers {
         push(count, edge_time);
         learn();
 
-        // The span reaches back just over one control period: a span of fixed counts grows to
-        // many periods at low speed, and that delay makes the velocity loop oscillate.  So short
-        // a span exposes the uneven edge spacing, hence the learnt weights in distance().
-        uint32_t    min_window = uint32_t(dt * timer_hz);
-        uint32_t    max_window = uint32_t(max_window_s * timer_hz);
-        const Mark* ref        = nullptr;
-        for (int i = 1; i < _n_marks; ++i) {
-            const Mark& m       = back(i);
-            uint32_t    elapsed = edge_time - m.time;
-            if (ref && elapsed > max_window) {
-                break;
-            }
-            ref = &m;
-            if (elapsed >= min_window) {
-                break;
-            }
-        }
-
-        uint32_t ticks = ref ? edge_time - ref->time : 0;
+        const Mark* ref   = span_start(edge_time, dt, timer_hz);
+        uint32_t    ticks = ref ? edge_time - ref->time : 0;
         if (ticks != 0) {
             _velocity = float(direction) * distance(ref->count, count) * timer_hz / float(ticks);
         }
