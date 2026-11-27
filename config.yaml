@@ -42,8 +42,8 @@ axes:
           in1_pin: gpio.32
           in2_pin: gpio.33
         velocity_pid:
-          kp: 0.0105
-          ki: 0.625
+          kp: 0.00735
+          ki: 0.875
           kff: 0.00311
           kfs: 9.12
 
@@ -79,10 +79,11 @@ axes:
           in1_pin: gpio.25
           in2_pin: gpio.26
         velocity_pid:
+          # Tuned with the mat between the rollers, which needs ~40-55% drive.
           kp: 0.01536
-          ki: 1.094
-          kff: 0.004594
-          kfs: 9.416
+          ki: 1.532
+          kff: 0.00436
+          kfs: 31.79
 
   z:
     steps_per_mm: 1000
