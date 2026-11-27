@@ -225,14 +225,12 @@ namespace MotorDrivers {
     // Jams under the following error threshold; relative to the active limit so it also
     // fires under homing/max_drive.  Stall homing approaches are left to stall_check.
     bool DCServo::jammed(float drive, float drive_limit, float error, bool stall_homing) {
-        if (_stall_ms && !stall_homing && std::fabs(drive) >= drive_limit * _stall_drive / 100.0f &&
-            std::fabs(_measured_vel) < _stall_velocity) {
-            ++_jam_ticks;
-        } else {
+        if (!(_stall_ms && !stall_homing && std::fabs(drive) >= drive_limit * _stall_drive / 100.0f &&
+              std::fabs(_measured_vel) < _stall_velocity)) {
             _jam_ticks = 0;
             return false;
         }
-        if (elapsed_ms(_jam_ticks) < float(_stall_ms)) {
+        if (elapsed_ms(++_jam_ticks) < float(_stall_ms)) {
             return false;
         }
         log_error(name() << " " << axisName() << " stalled at " << drive << "% drive for " << _stall_ms << "ms, error " << error
@@ -275,17 +273,12 @@ namespace MotorDrivers {
     // Error alone also grows while accelerating, and velocity drops between slow steps;
     // only both, held for a while, mean the axis is pushing against something.
     bool DCServo::detect_stall(float error, bool approaching) {
-        if (!approaching || !can_self_home()) {
+        if (!approaching || !can_self_home() ||
+            !(std::fabs(error) > float(_homing->_stall_error) && std::fabs(_measured_vel) < _homing->_stall_velocity)) {
             _stall_ticks = 0;
             return false;
         }
-        if (std::fabs(error) > float(_homing->_stall_error) && std::fabs(_measured_vel) < _homing->_stall_velocity) {
-            ++_stall_ticks;
-        } else {
-            _stall_ticks = 0;
-            return false;
-        }
-        return elapsed_ms(_stall_ticks) >= float(_homing->_stall_ms);
+        return elapsed_ms(++_stall_ticks) >= float(_homing->_stall_ms);
     }
 
     void DCServo::release_stall() {
@@ -357,7 +350,6 @@ namespace MotorDrivers {
             release_stall();
         }
         update_trip();
-
 
         if (_disabled || _tripped) {
             _dc->coast();  // not set(0): that brakes
@@ -514,8 +506,9 @@ namespace MotorDrivers {
     }
 
     void DCServo::config_message() {
-        log_info("    " << name() << " Encoder A:" << _encoder->a_pin().name() << " B:" << _encoder->b_pin().name() << " period:" << _update_ms
-                        << "ms" << (_encoder->inverted() ? " inverted" : "") << (_encoder->has_timing() ? " edge timed" : " count differenced"));
+        log_info("    " << name() << " Encoder A:" << _encoder->a_pin().name() << " B:" << _encoder->b_pin().name()
+                        << " period:" << _update_ms << "ms" << (_encoder->inverted() ? " inverted" : "")
+                        << (_encoder->has_timing() ? " edge timed" : " count differenced"));
     }
 
     // Configuration registration

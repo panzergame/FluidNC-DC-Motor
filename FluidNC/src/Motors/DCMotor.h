@@ -28,7 +28,6 @@ namespace MotorDrivers {
         void coast();  // both inputs low  - motor terminals open
 
         uint32_t maxDuty() const { return _max_duty; }  // full scale reduced by max_duty_percent
-        int32_t  duty() const { return _duty; }         // last set(); brake() and coast() reset it to 0
 
         // Configuration handlers:
         void validate() override;
@@ -50,7 +49,5 @@ namespace MotorDrivers {
         // Last duty written to each input, so write() can skip redundant register writes.
         uint32_t _in1_duty = 0;
         uint32_t _in2_duty = 0;
-
-        int32_t _duty = 0;
     };
 }

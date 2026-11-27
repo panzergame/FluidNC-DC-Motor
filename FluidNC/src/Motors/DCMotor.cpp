@@ -22,19 +22,17 @@ namespace MotorDrivers {
         // New PwmPins start at zero duty, so the cached values already match.
         _in1_duty = 0;
         _in2_duty = 0;
-        _duty     = 0;
 
         config_message();
     }
 
     void DCMotor::set(int32_t duty) {
-        int32_t limit = int32_t(_max_duty);
+        const int32_t limit = int32_t(_max_duty);
         if (duty > limit) {
             duty = limit;
         } else if (duty < -limit) {
             duty = -limit;
         }
-        _duty = duty;
 
         if (_invert_direction) {
             duty = -duty;
@@ -50,12 +48,10 @@ namespace MotorDrivers {
     }
 
     void DCMotor::brake() {
-        _duty = 0;
         write(_full_duty, _full_duty);
     }
 
     void DCMotor::coast() {
-        _duty = 0;
         write(0, 0);
     }
 

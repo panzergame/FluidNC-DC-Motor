@@ -9,9 +9,8 @@ namespace MotorDrivers {
     bool Encoder::init() {
         _a_pin.setAttr(Pin::Attr::Input);
         _b_pin.setAttr(Pin::Attr::Input);
-        _encoder = new QuadratureEncoder(_a_pin.getNative(Pin::Capabilities::Input | Pin::Capabilities::Native),
-                                         _b_pin.getNative(Pin::Capabilities::Input | Pin::Capabilities::Native),
-                                         _filter_ns);
+        const auto caps = Pin::Capabilities::Input | Pin::Capabilities::Native;
+        _encoder        = new QuadratureEncoder(_a_pin.getNative(caps), _b_pin.getNative(caps), _filter_ns);
         return _encoder->valid();
     }
 

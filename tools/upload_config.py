@@ -129,10 +129,8 @@ def send_with_retries(ser, payload, what):
 
 def xmodem_send(ser, data):
     total = len(data)
-    seq = 1
-    for offset in range(0, total, PACKET_SIZE):
+    for seq, offset in enumerate(range(0, total, PACKET_SIZE), start=1):
         send_with_retries(ser, build_packet(seq, data[offset:offset + PACKET_SIZE]), f"packet {seq}")
-        seq += 1
         log(f"\r  sent {min(offset + PACKET_SIZE, total)}/{total} bytes", end="")
     if total:
         log("")
