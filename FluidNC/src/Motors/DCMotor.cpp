@@ -40,18 +40,12 @@ namespace MotorDrivers {
             duty = -duty;
         }
 
-        if (_slow_decay) {
-            // The off-time is spent in brake rather than coast, so the inverted
-            // duty goes on the opposite input.
-            if (duty >= 0) {
-                write(_full_duty, _full_duty - uint32_t(duty));
-            } else {
-                write(_full_duty - uint32_t(-duty), _full_duty);
-            }
-        } else if (duty >= 0) {
-            write(uint32_t(duty), 0);
+        // The off-time is spent in brake rather than coast, so the inverted
+        // duty goes on the opposite input.
+        if (duty >= 0) {
+            write(_full_duty, _full_duty - uint32_t(duty));
         } else {
-            write(0, uint32_t(-duty));
+            write(_full_duty - uint32_t(-duty), _full_duty);
         }
     }
 
@@ -92,9 +86,9 @@ namespace MotorDrivers {
         Assert(!_in1_pin.undefined(), "in1_pin should be configured.");
         Assert(!_in2_pin.undefined(), "in2_pin should be configured.");
 
-        // Sign-magnitude drive PWMs whichever input matches the commanded
-        // direction, so both of them have to be PWM-capable - an I2SO or
-        // extender pin will not do.
+        // Each input carries the PWM in one direction and is held high in the
+        // other, so both of them have to be PWM-capable - an I2SO or extender
+        // pin will not do.
         Assert(_in1_pin.capabilities().has(Pin::Capabilities::PWM), "in1_pin %s cannot do PWM", _in1_pin.name());
         Assert(_in2_pin.capabilities().has(Pin::Capabilities::PWM), "in2_pin %s cannot do PWM", _in2_pin.name());
 
@@ -105,15 +99,15 @@ namespace MotorDrivers {
         // @config in1_pin
         // @default NO_PIN
         // @pin_attributes pwm
-        // H-bridge input 1, e.g. IN1 on an A4950.  Carries the PWM when the motor is
-        // driven in the positive direction, and is held low otherwise.
+        // H-bridge input 1, e.g. IN1 on an A4950.  Held high when the motor is driven
+        // in the positive direction, and carries the inverted PWM in the negative one.
         handler.item("in1_pin", _in1_pin);
 
         // @config in2_pin
         // @default NO_PIN
         // @pin_attributes pwm
-        // H-bridge input 2, e.g. IN2 on an A4950.  Carries the PWM when the motor is
-        // driven in the negative direction, and is held low otherwise.
+        // H-bridge input 2, e.g. IN2 on an A4950.  Held high when the motor is driven
+        // in the negative direction, and carries the inverted PWM in the positive one.
         handler.item("in2_pin", _in2_pin);
 
         // @config pwm_hz
@@ -135,15 +129,6 @@ namespace MotorDrivers {
         // to cap average motor voltage when the supply is higher than the motor is
         // rated for.  brake() ignores it, since a partial brake is not a brake.
         handler.item("max_duty_percent", _max_duty_percent, 1, 100);
-
-        // @config slow_decay
-        // @default false
-        // @tuning per-machine
-        // PWM the bridge between drive and brake instead of drive and coast.  Motor
-        // current stays continuous at low duty, so duty maps far more linearly onto
-        // torque near zero, and back-EMF damps the motor at every duty.  Zero duty
-        // brakes instead of coasting; disabling the motor still coasts.
-        handler.item("slow_decay", _slow_decay);
     }
 
     void DCMotor::config_message() {

@@ -253,7 +253,7 @@ namespace MotorDrivers {
         _stall_pos      = measured;
         log_debug(name() << " " << axisName() << " stalled at " << (measured + _offset) << " error " << error);
         resync(setpoint, measured);
-        _dc->set(0);
+        _dc->brake();
         _motor->softLimit(_stall_positive, true);
         return true;
     }
@@ -263,7 +263,7 @@ namespace MotorDrivers {
             // The setpoint keeps advancing until the limit event stops
             // the planner; tracking it would only push into the stop.
             resync(setpoint, measured);
-            _dc->set(0);
+            _dc->brake();
             return true;
         }
         if (std::fabs(measured - _stall_pos) > float(_homing->_release_counts)) {
@@ -296,7 +296,7 @@ namespace MotorDrivers {
     // Stiction leaves the last count or two uncorrected, so at rest the integral would only
     // wind up into a stalled-motor drive.  Idle rather than zero setpoint velocity, because
     // slow moves sit still for many ticks between steps.
-    bool DCServo::rest_coast(float error, float& loop_error) {
+    bool DCServo::rest_brake(float error, float& loop_error) {
         if (!_position_deadband || !state_is(State::Idle)) {
             _parked = false;
             // At rest the motion direction lingers for a while; rest_overshoot() owns _rest_dir by then.
@@ -312,7 +312,7 @@ namespace MotorDrivers {
     }
 
     // Parked, the band runs from position_deadband short of the target to position_deadband
-    // past the overshoot point, so neither the coast-through nor the spring-back re-drives.
+    // past the overshoot point, so neither the overrun nor the spring-back re-drives.
     bool DCServo::rest_overshoot(float error, float& loop_error) {
         if (_parked) {
             float e = _rest_dir ? error * float(_rest_dir) : std::fabs(error);  // positive short of the target
@@ -360,7 +360,7 @@ namespace MotorDrivers {
 
 
         if (_disabled || _tripped) {
-            _dc->coast();  // not set(0): that brakes with slow_decay
+            _dc->coast();  // not set(0): that brakes
             resync(setpoint, measured);
             return;
         }
@@ -390,7 +390,7 @@ namespace MotorDrivers {
         float loop_error   = error;
         float velocity_cmd = 0.0f;
         float drive        = 0.0f;
-        if (rest_coast(error, loop_error)) {
+        if (rest_brake(error, loop_error)) {
             _pid->reset();
         } else {
             velocity_cmd = _setpoint_vel + _position_kp * loop_error;
@@ -459,9 +459,9 @@ namespace MotorDrivers {
         // @default 0
         // @tuning per-machine
         // While the machine is idle and the position error is within this many encoder
-        // counts, the drive drops to zero (a brake with slow_decay) and the velocity PID
-        // is reset.  Set it just above the
-        // error stiction leaves at rest, so the loop does not hold drive on a stalled motor.
+        // counts, the drive drops to zero, braking the motor, and the velocity PID is
+        // reset.  Set it just above the error stiction leaves at rest, so the loop does
+        // not hold drive on a stalled motor.
         // 0 disables it.
         handler.item("position_deadband", _position_deadband, 0, 10000);
 

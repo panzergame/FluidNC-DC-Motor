@@ -9,17 +9,19 @@
 namespace MotorDrivers {
     /*
         Power stage for a brushed DC motor behind a two-input H-bridge such as the
-        Allegro A4950 (IN1/IN2).  Sign-magnitude drive: the input for the requested
-        direction carries the PWM and the other is held low, so duty maps directly onto
-        average motor voltage and zero duty coasts.  Lock-antiphase is more linear near
-        zero but pushes ripple current through the motor even at standstill.
+        Allegro A4950 (IN1/IN2).  Sign-magnitude drive with slow decay: the input for the
+        requested direction is held high and the other carries the inverted PWM, so the
+        off-time is spent in brake rather than coast.  Motor current stays continuous,
+        duty maps nearly linearly onto torque down to zero, and back-EMF damps the motor
+        at every duty.  Lock-antiphase would be as linear but pushes ripple current
+        through the motor even at standstill.
     */
     class DCMotor : public Configuration::Configurable {
     public:
         void init();  // must run before set()
 
         // Signed duty, clamped to +/- maxDuty(); positive increases axis position.  Zero
-        // coasts, or brakes with slow_decay.
+        // brakes.
         void set(int32_t duty);
 
         void brake();  // both inputs high - motor terminals shorted
@@ -41,7 +43,6 @@ namespace MotorDrivers {
         uint32_t _pwm_hz           = 20000;
         bool     _invert_direction = false;
         uint32_t _max_duty_percent = 100;
-        bool     _slow_decay       = false;
 
         uint32_t _full_duty = 0;  // PWM full scale, known after init(); brake() uses it
         uint32_t _max_duty  = 0;

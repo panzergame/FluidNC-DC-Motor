@@ -41,7 +41,6 @@ axes:
         dc_motor:
           in1_pin: gpio.32
           in2_pin: gpio.33
-          slow_decay: true
         velocity_pid:
           kp: 0.0105
           ki: 0.625
@@ -79,7 +78,6 @@ axes:
         dc_motor:
           in1_pin: gpio.25
           in2_pin: gpio.26
-          slow_decay: true
         velocity_pid:
           kp: 0.01536
           ki: 1.094
@@ -114,7 +112,6 @@ axes:
         dc_motor:
           in1_pin: gpio.27
           in2_pin: gpio.4
-          slow_decay: true
         velocity_pid:
           kp: 0.0105
           ki: 0.625

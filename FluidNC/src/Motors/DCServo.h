@@ -66,8 +66,8 @@ namespace MotorDrivers {
         bool detect_stall(float error, bool approaching);
         void release_stall();
 
-        // Rest: both return true while the motor should coast
-        bool rest_coast(float error, float& loop_error);
+        // Rest: both return true while the motor should brake
+        bool rest_brake(float error, float& loop_error);
         bool rest_overshoot(float error, float& loop_error);
 
         void report(float setpoint, float measured, float error, float velocity_cmd, float drive);
@@ -110,7 +110,7 @@ namespace MotorDrivers {
         uint32_t _jam_ticks     = 0;
 
         int32_t _rest_dir = 0;      // direction of the last approach to the target
-        bool    _parked   = false;  // reached the overshoot point and coasting since
+        bool    _parked   = false;  // reached the overshoot point and braked since
 
         int32_t  _motion_dir  = 0;  // last setpoint step direction, 0 once stopped; signs the friction feedforward
         uint32_t _still_ticks = 0;
